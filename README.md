@@ -158,9 +158,9 @@ The following features are planned for future releases:
     - [x] Implement a metrics system (e.g., Prometheus) for performance tracking.
 
 10.  **Phase 10: Migration & Compatibility**
-    - [ ] Versioning of multiblock definitions.
-    - [ ] Automated migrator for existing structures.
-    - [ ] Clear warnings for incompatible changes.
+      - [x] Versioning of multiblock definitions.
+      - [x] Automated migrator for existing structures.
+      - [x] Clear warnings for incompatible changes.
 
 ---
 
