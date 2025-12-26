@@ -41,9 +41,7 @@ public class MultiblockManager {
     }
     
     public void unregisterAll() {
-        if (tickTask != null && !tickTask.isCancelled()) {
-            tickTask.cancel();
-        }
+        stopTicking();
         types.clear();
         activeInstances.clear();
         blockToInstanceMap.clear();
@@ -57,7 +55,16 @@ public class MultiblockManager {
         }
     }
     
+    public void stopTicking() {
+        if (tickTask != null && !tickTask.isCancelled()) {
+            tickTask.cancel();
+        }
+        tickTask = null;
+    }
+    
     public void startTicking(MultiBlockEngine plugin) {
+        stopTicking();
+        
         // Load config for metrics
         metrics.setEnabled(plugin.getConfig().getBoolean("metrics", true));
         
