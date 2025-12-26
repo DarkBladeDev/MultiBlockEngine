@@ -25,6 +25,8 @@ import org.bukkit.Tag;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.util.Vector;
 
+import com.darkbladedev.engine.model.action.ConditionalAction;
+
 import com.darkbladedev.engine.api.impl.MultiblockAPIImpl;
 
 import java.io.File;
@@ -43,6 +45,7 @@ public class MultiblockParser {
         registerDefaults();
     }
     
+    @SuppressWarnings("unchecked")
     private void registerDefaults() {
         // Matchers
         // Handled via specialized logic in parseMatcher currently, but could be refactored.
@@ -62,6 +65,35 @@ public class MultiblockParser {
                 amount = n.doubleValue();
             }
             return new ModifyVariableAction((String) map.get("key"), amount, op);
+        });
+        
+        api.registerAction("conditional", map -> {
+            List<Condition> conditions = new ArrayList<>();
+            if (map.containsKey("conditions")) {
+                List<?> condList = (List<?>) map.get("conditions");
+                for (Object condObj : condList) {
+                    if (condObj instanceof Map) {
+                        Map<?, ?> condMap = (Map<?, ?>) condObj;
+                        String condType = (String) condMap.get("type");
+                        Function<Map<String, Object>, Condition> factory = api.getConditionFactory(condType);
+                        if (factory != null) {
+                            conditions.add(factory.apply((Map<String, Object>) condMap));
+                        }
+                    }
+                }
+            }
+            
+            List<Action> thenActions = new ArrayList<>();
+            if (map.containsKey("then")) {
+                thenActions = parseActionList((List<?>) map.get("then"));
+            }
+            
+            List<Action> elseActions = new ArrayList<>();
+            if (map.containsKey("else")) {
+                elseActions = parseActionList((List<?>) map.get("else"));
+            }
+            
+            return new ConditionalAction(conditions, thenActions, elseActions);
         });
         
         // Conditions
@@ -153,69 +185,75 @@ public class MultiblockParser {
         return new MultiblockType(id, version, new Vector(0, 0, 0), controllerMatcher, pattern, true, behaviorConfig, defaultVariables, onCreateActions, onTickActions, onInteractActions, onBreakActions, tickInterval);
     }
     
-    @SuppressWarnings("unchecked")
     private List<Action> parseActions(YamlConfiguration config, String path) {
         List<Action> actions = new ArrayList<>();
         if (config.contains(path)) {
              List<?> actionList = config.getList(path);
-             for (Object obj : actionList) {
-                 if (obj instanceof java.util.Map) {
-                     java.util.Map<?, ?> map = (java.util.Map<?, ?>) obj;
-                     
-                     // Parse conditions if present
-                     List<Condition> conditions = new ArrayList<>();
-                     if (map.containsKey("conditions")) {
-                         List<?> condList = (List<?>) map.get("conditions");
-                         for (Object condObj : condList) {
-                             if (condObj instanceof java.util.Map) {
-                                 java.util.Map<?, ?> condMap = (java.util.Map<?, ?>) condObj;
-                                 String condType = (String) condMap.get("type");
-                                 
-                                 Function<Map<String, Object>, Condition> factory = api.getConditionFactory(condType);
-                                 if (factory != null) {
-                                     // Unsafe cast, but YAML parser gives us Map<String, Object> effectively
-                                     conditions.add(factory.apply((Map<String, Object>) condMap));
-                                 } else {
-                                     MultiBlockEngine.getInstance().getLogger().warning("Unknown condition type: " + condType);
-                                 }
-                             }
-                         }
-                     }
-                     
-                     String type = (String) map.get("type");
-                     Action action = null;
-                     
-                     Function<Map<String, Object>, Action> actionFactory = api.getActionFactory(type);
-                     if (actionFactory != null) {
-                         action = actionFactory.apply((Map<String, Object>) map);
-                     } else {
-                         MultiBlockEngine.getInstance().getLogger().warning("Unknown action type: " + type);
-                     }
-                     
-                     if (action != null) {
-                         // Wrap with conditions if any
-                         if (!conditions.isEmpty()) {
-                             Action finalAction = action;
-                             actions.add(new Action() {
-                                 @Override
-                                 public void execute(MultiblockInstance instance, org.bukkit.entity.Player player) {
-                                     for (Condition c : conditions) {
-                                         if (!c.check(instance, player)) return;
-                                     }
-                                     finalAction.execute(instance, player);
-                                 }
-                                 
-                                 @Override
-                                 public void execute(MultiblockInstance instance) {
-                                     execute(instance, null);
-                                 }
-                             });
-                         } else {
-                             actions.add(action);
-                         }
-                     }
-                 }
-             }
+             actions.addAll(parseActionList(actionList));
+        }
+        return actions;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Action> parseActionList(List<?> actionList) {
+        List<Action> actions = new ArrayList<>();
+        for (Object obj : actionList) {
+            if (obj instanceof java.util.Map) {
+                java.util.Map<?, ?> map = (java.util.Map<?, ?>) obj;
+                
+                // Parse conditions if present
+                List<Condition> conditions = new ArrayList<>();
+                if (map.containsKey("conditions")) {
+                    List<?> condList = (List<?>) map.get("conditions");
+                    for (Object condObj : condList) {
+                        if (condObj instanceof java.util.Map) {
+                            java.util.Map<?, ?> condMap = (java.util.Map<?, ?>) condObj;
+                            String condType = (String) condMap.get("type");
+                            
+                            Function<Map<String, Object>, Condition> factory = api.getConditionFactory(condType);
+                            if (factory != null) {
+                                // Unsafe cast, but YAML parser gives us Map<String, Object> effectively
+                                conditions.add(factory.apply((Map<String, Object>) condMap));
+                            } else {
+                                MultiBlockEngine.getInstance().getLogger().warning("Unknown condition type: " + condType);
+                            }
+                        }
+                    }
+                }
+                
+                String type = (String) map.get("type");
+                Action action = null;
+                
+                Function<Map<String, Object>, Action> actionFactory = api.getActionFactory(type);
+                if (actionFactory != null) {
+                    action = actionFactory.apply((Map<String, Object>) map);
+                } else {
+                    MultiBlockEngine.getInstance().getLogger().warning("Unknown action type: " + type);
+                }
+                
+                if (action != null) {
+                    // Wrap with conditions if any
+                    if (!conditions.isEmpty()) {
+                        Action finalAction = action;
+                        actions.add(new Action() {
+                            @Override
+                            public void execute(MultiblockInstance instance, org.bukkit.entity.Player player) {
+                                for (Condition c : conditions) {
+                                    if (!c.check(instance, player)) return;
+                                }
+                                finalAction.execute(instance, player);
+                            }
+                            
+                            @Override
+                            public void execute(MultiblockInstance instance) {
+                                execute(instance, null);
+                            }
+                        });
+                    } else {
+                        actions.add(action);
+                    }
+                }
+            }
         }
         return actions;
     }

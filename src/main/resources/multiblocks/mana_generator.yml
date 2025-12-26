@@ -61,33 +61,34 @@ actions:
       value: 0
 
   on_interact:
-    # Activate if Inactive
-    - type: set_state
-      value: ACTIVE
+    # Check permissions with feedback using Conditional Action
+    - type: conditional
       conditions:
-        - type: state
-          value: INACTIVE
-    - type: message
-      value: "&e[ManaGen] Generator ACTIVATED."
-      conditions:
-        - type: state
-          value: INACTIVE
-          
-    # Deactivate if Active
-    - type: set_state
-      value: INACTIVE
-      conditions:
-        - type: state
-          value: ACTIVE
-    - type: message
-      value: "&c[ManaGen] Generator DEACTIVATED."
-      conditions:
-        - type: state
-          value: ACTIVE
-          
-    # Show Mana Status (Always)
-    - type: message
-      value: "&b[ManaGen] Current Mana: <variable:mana>/<variable:max_mana>"
+        - type: permission
+          value: "multiblock.use.mana_gen"
+      then:
+        # If permitted, try toggling state
+        - type: conditional
+          conditions:
+            - type: state
+              value: INACTIVE
+          then:
+            - type: set_state
+              value: ACTIVE
+            - type: message
+              value: "&e[ManaGen] Generator ACTIVATED."
+          else:
+            - type: set_state
+              value: INACTIVE
+            - type: message
+              value: "&c[ManaGen] Generator DEACTIVATED."
+        # Always show mana
+        - type: message
+          value: "&b[ManaGen] Current Mana: <variable:mana>/<variable:max_mana>"
+      else:
+        # If no permission
+        - type: message
+          value: "&c[ManaGen] You do not have permission to use this!"
 
   on_tick:
     # Generate Mana if Active
