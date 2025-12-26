@@ -1,6 +1,8 @@
 package com.darkbladedev.engine.model.action;
 
 import com.darkbladedev.engine.model.MultiblockInstance;
+import me.clip.placeholderapi.PlaceholderAPI;
+import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
 
@@ -13,9 +15,21 @@ public record SendMessageAction(String message) implements Action {
         // Find players nearby or use a context player if we had one.
         // For now, let's broadcast to nearby players (radius 10)
         Collection<Player> players = instance.anchorLocation().getNearbyPlayers(10);
-        String colored = ChatColor.translateAlternateColorCodes('&', message);
+        
+        // Internal variable replacement
+        String text = message
+                .replace("%x%", String.valueOf(instance.anchorLocation().getBlockX()))
+                .replace("%y%", String.valueOf(instance.anchorLocation().getBlockY()))
+                .replace("%z%", String.valueOf(instance.anchorLocation().getBlockZ()));
+        
+        boolean hasPapi = Bukkit.getPluginManager().getPlugin("PlaceholderAPI") != null;
+
         for (Player p : players) {
-            p.sendMessage(colored);
+            String processed = text;
+            if (hasPapi) {
+                processed = PlaceholderAPI.setPlaceholders(p, processed);
+            }
+            p.sendMessage(ChatColor.translateAlternateColorCodes('&', processed));
         }
     }
 }

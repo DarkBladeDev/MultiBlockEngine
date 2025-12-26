@@ -1,6 +1,7 @@
 package com.darkbladedev.engine;
 
 import com.darkbladedev.engine.command.MultiblockCommand;
+import com.darkbladedev.engine.integration.MultiblockExpansion;
 import com.darkbladedev.engine.listener.MultiblockListener;
 import com.darkbladedev.engine.manager.MultiblockManager;
 import com.darkbladedev.engine.model.MultiblockInstance;
@@ -73,6 +74,12 @@ public class MultiBlockEngine extends JavaPlugin {
         
         // Start Ticking
         manager.startTicking(this);
+        
+        // Register PlaceholderExpansion
+        if (getServer().getPluginManager().getPlugin("PlaceholderAPI") != null) {
+            new MultiblockExpansion(this).register();
+            getLogger().info("Hooked into PlaceholderAPI.");
+        }
         
         getLogger().info("MultiBlockEngine enabled with " + types.size() + " types.");
     }
