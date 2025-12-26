@@ -77,18 +77,25 @@ actions:
               value: ACTIVE
             - type: message
               value: "&e[ManaGen] Generator ACTIVATED."
+              target: trigger
+            - type: message
+              value: "&e[ManaGen] Generator activated by <player_name>!"
+              target: "nearby:20"
           else:
             - type: set_state
               value: INACTIVE
             - type: message
               value: "&c[ManaGen] Generator DEACTIVATED."
-        # Always show mana
+              target: trigger
+        # Always show mana to the interactor
         - type: message
           value: "&b[ManaGen] Current Mana: <variable:mana>/<variable:max_mana>"
+          target: trigger
       else:
         # If no permission
         - type: message
           value: "&c[ManaGen] You do not have permission to use this!"
+          target: trigger
 
   on_tick:
     # Generate Mana if Active
@@ -103,6 +110,7 @@ actions:
     # Notify Progress
     - type: message
       value: "&7[ManaGen] Generating mana... (<variable:mana>)"
+      target: "nearby:15"
       conditions:
         - type: state
           value: ACTIVE
@@ -118,12 +126,24 @@ actions:
     # Discharge at Max Mana
     - type: message
       value: "&d[ManaGen] &lDISCHARGE! &r&dYou received a reward."
+      target: "nearby:10"
       conditions:
         - type: state
           value: ACTIVE
         - type: variable
           key: mana
           value: 100
+          comparison: GREATER_OR_EQUAL
+          
+    - type: message
+      value: "&c[ManaGen] WARNING: High energy levels detected!"
+      target: "permission:multiblock.admin"
+      conditions:
+        - type: state
+          value: ACTIVE
+        - type: variable
+          key: mana
+          value: 90
           comparison: GREATER_OR_EQUAL
           
     - type: command

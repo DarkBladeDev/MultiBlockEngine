@@ -52,7 +52,7 @@ public class MultiblockParser {
         // For now we only registry-fy Actions and Conditions as they map cleanly to Map<String, Object>
         
         // Actions
-        api.registerAction("message", map -> new SendMessageAction((String) map.get("value")));
+        api.registerAction("message", map -> new SendMessageAction((String) map.get("value"), map.get("target")));
         api.registerAction("command", map -> new ConsoleCommandAction((String) map.get("value")));
         api.registerAction("set_state", map -> new SetStateAction(MultiblockState.valueOf((String) map.get("value"))));
         api.registerAction("set_variable", map -> new SetVariableAction((String) map.get("key"), map.get("value")));
