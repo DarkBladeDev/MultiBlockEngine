@@ -29,6 +29,16 @@ public class MultiblockAPIImpl implements MultiblockAPI {
         matcherRegistry.put(prefix.toLowerCase(), factory);
     }
     
+    @Override
+    public com.darkbladedev.engine.api.builder.MultiblockBuilder createMultiblock(String id) {
+        return new com.darkbladedev.engine.api.builder.MultiblockBuilder(id);
+    }
+    
+    @Override
+    public void registerMultiblock(com.darkbladedev.engine.model.MultiblockType type) {
+        com.darkbladedev.engine.MultiBlockEngine.getInstance().getManager().registerType(type);
+    }
+    
     public Function<Map<String, Object>, Action> getActionFactory(String type) {
         return actionRegistry.get(type.toLowerCase());
     }

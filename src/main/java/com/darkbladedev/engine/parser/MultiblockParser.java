@@ -127,6 +127,18 @@ public class MultiblockParser {
         
         api.registerCondition("permission", map -> new PlayerPermissionCondition((String) map.get("value")));
         api.registerCondition("sneaking", map -> new PlayerSneakingCondition((boolean) map.getOrDefault("value", true)));
+
+        api.registerMatcher("tag", tagName -> {
+            NamespacedKey key = NamespacedKey.fromString(tagName);
+            if (key == null) {
+                throw new IllegalArgumentException("Invalid tag key: " + tagName);
+            }
+            Tag<Material> tag = Bukkit.getTag(Tag.REGISTRY_BLOCKS, key, Material.class);
+            if (tag == null) {
+                throw new IllegalArgumentException("Unknown tag: " + tagName);
+            }
+            return new TagMatcher(tag);
+        });
     }
 
     public List<MultiblockType> loadAll(File directory) {
@@ -396,6 +408,16 @@ public class MultiblockParser {
     private BlockMatcher parseMatcher(Object obj) {
         if (obj instanceof String) {
             String s = (String) obj;
+
+            int prefixIdx = s.indexOf(':');
+            if (prefixIdx > 0) {
+                String prefix = s.substring(0, prefixIdx);
+                Function<String, BlockMatcher> factory = api.getMatcherFactory(prefix);
+                if (factory != null) {
+                    return factory.apply(s.substring(prefixIdx + 1));
+                }
+            }
+
             if (s.equalsIgnoreCase("AIR")) return new AirMatcher();
             if (s.startsWith("#")) {
                 // Tag

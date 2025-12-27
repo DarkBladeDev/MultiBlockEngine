@@ -2,6 +2,7 @@ package com.darkbladedev.engine;
 
 import com.darkbladedev.engine.api.MultiblockAPI;
 import com.darkbladedev.engine.api.impl.MultiblockAPIImpl;
+import com.darkbladedev.engine.addon.AddonManager;
 import com.darkbladedev.engine.command.MultiblockCommand;
 import com.darkbladedev.engine.integration.MultiblockExpansion;
 import com.darkbladedev.engine.listener.MultiblockListener;
@@ -21,12 +22,15 @@ import com.darkbladedev.engine.debug.DebugManager;
 
 public class MultiBlockEngine extends JavaPlugin {
 
+    private static final int API_VERSION = 1;
+
     private static MultiBlockEngine instance;
     private MultiblockManager manager;
     private MultiblockParser parser;
     private StorageManager storage;
     private MultiblockAPIImpl api;
     private DebugManager debugManager;
+    private AddonManager addonManager;
 
     @Override
     public void onEnable() {
@@ -49,6 +53,11 @@ public class MultiBlockEngine extends JavaPlugin {
         storage.init();
         manager.setStorage(storage);
         debugManager = new DebugManager(this);
+
+        addonManager = new AddonManager(this, api);
+        manager.setAddonManager(addonManager);
+
+        addonManager.loadAddons();
         
         // Ensure directory exists
         File multiblockDir = new File(getDataFolder(), "multiblocks");
@@ -61,8 +70,12 @@ public class MultiBlockEngine extends JavaPlugin {
         // Load definitions
         List<MultiblockType> types = parser.loadAll(multiblockDir);
         for (MultiblockType type : types) {
-            manager.registerType(type);
-            getLogger().info("Loaded multiblock: " + type.id());
+            try {
+                manager.registerType(type);
+                getLogger().info("Loaded multiblock: " + type.id());
+            } catch (Exception e) {
+                getLogger().severe("Failed to register multiblock type: " + type.id() + " Cause: " + e.getMessage());
+            }
         }
         
         // Restore persisted instances
@@ -71,6 +84,8 @@ public class MultiBlockEngine extends JavaPlugin {
             manager.registerInstance(inst);
         }
         getLogger().info("Restored " + instances.size() + " active instances.");
+
+        addonManager.enableAddons();
         
         // Register Listeners
         getServer().getPluginManager().registerEvents(new MultiblockListener(manager), this);
@@ -97,6 +112,9 @@ public class MultiBlockEngine extends JavaPlugin {
         if (debugManager != null) {
             debugManager.stopAll();
         }
+        if (addonManager != null) {
+            addonManager.disableAddons();
+        }
         if (manager != null) {
             manager.unregisterAll();
         }
@@ -108,6 +126,10 @@ public class MultiBlockEngine extends JavaPlugin {
     
     public static MultiBlockEngine getInstance() {
         return instance;
+    }
+
+    public static int getApiVersion() {
+        return API_VERSION;
     }
     
     public MultiblockManager getManager() {
@@ -124,5 +146,9 @@ public class MultiBlockEngine extends JavaPlugin {
     
     public DebugManager getDebugManager() {
         return debugManager;
+    }
+
+    public AddonManager getAddonManager() {
+        return addonManager;
     }
 }

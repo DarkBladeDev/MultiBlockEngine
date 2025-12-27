@@ -1,7 +1,9 @@
 package com.darkbladedev.engine.manager;
 
 import com.darkbladedev.engine.MultiBlockEngine;
+import com.darkbladedev.engine.addon.AddonManager;
 import com.darkbladedev.engine.api.event.MultiblockFormEvent;
+import com.darkbladedev.engine.api.addon.AddonException;
 import com.darkbladedev.engine.model.MultiblockInstance;
 import com.darkbladedev.engine.model.MultiblockState;
 import com.darkbladedev.engine.model.MultiblockType;
@@ -27,6 +29,7 @@ public class MultiblockManager {
     private final Map<Location, MultiblockInstance> blockToInstanceMap = new ConcurrentHashMap<>();
     private final MetricsManager metrics = new MetricsManager();
     private final HologramManager holograms = new HologramManager();
+    private AddonManager addonManager;
     private StorageManager storage;
     private BukkitTask tickTask;
     
@@ -37,7 +40,14 @@ public class MultiblockManager {
         this.storage = storage;
     }
 
+    public void setAddonManager(AddonManager addonManager) {
+        this.addonManager = addonManager;
+    }
+
     public void registerType(MultiblockType type) {
+        if (types.containsKey(type.id())) {
+            throw new IllegalArgumentException("Duplicate multiblock id: " + type.id());
+        }
         types.put(type.id(), type);
     }
     
@@ -218,6 +228,30 @@ public class MultiblockManager {
         blockToInstanceMap.put(instance.anchorLocation(), instance);
         // Map other blocks?
         // For simple interaction handling, we mostly care about controller.
+
+        initializeCapabilities(instance);
+    }
+
+    private void initializeCapabilities(MultiblockInstance instance) {
+        for (MultiblockType.CapabilityFactory factory : instance.type().capabilityFactories()) {
+            if (factory == null) continue;
+
+            String ownerId = factory.ownerId();
+            try {
+                var capability = factory.factory().apply(instance);
+                if (capability == null) {
+                    throw new IllegalStateException("Capability factory returned null");
+                }
+                instance.addCapability(capability);
+            } catch (Throwable t) {
+                String msg = "Failed to initialize capability for multiblock " + instance.type().id();
+                if (addonManager != null && ownerId != null && !ownerId.isBlank() && !"core".equalsIgnoreCase(ownerId)) {
+                    addonManager.failAddon(ownerId, AddonException.Phase.RUNTIME, msg, t, true);
+                } else {
+                    MultiBlockEngine.getInstance().getLogger().log(java.util.logging.Level.SEVERE, "[MultiBlockEngine][Capability][Owner:" + ownerId + "] " + msg, t);
+                }
+            }
+        }
     }
     
     public Optional<MultiblockInstance> getInstanceAt(Location loc) {
