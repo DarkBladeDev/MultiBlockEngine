@@ -41,6 +41,14 @@ public class MultiblockManager {
         types.put(type.id(), type);
     }
     
+    public Optional<MultiblockType> getType(String id) {
+        return Optional.ofNullable(types.get(id));
+    }
+    
+    public Collection<MultiblockType> getTypes() {
+        return Collections.unmodifiableCollection(types.values());
+    }
+    
     public void unregisterAll() {
         stopTicking();
         holograms.removeAll();
@@ -118,14 +126,6 @@ public class MultiblockManager {
         return !players.isEmpty();
     }
     
-    public Optional<MultiblockType> getType(String id) {
-        return Optional.ofNullable(types.get(id));
-    }
-    
-    public Collection<MultiblockType> getTypes() {
-        return types.values();
-    }
-    
     /**
      * Tries to create a multiblock instance from a controller block.
      * Handles rotation automatically.
@@ -190,95 +190,60 @@ public class MultiblockManager {
             // Chunk Safety Check
             if (!target.getChunk().isLoaded()) {
                 // If chunk is not loaded, we cannot validate.
-                // Fail creation to prevent loading chunks or working with partial data.
                 return false;
             }
-
+            
             if (!entry.matcher().matches(target)) {
-                // If optional, skip matching failure
-                if (entry.optional()) {
-                    continue;
+                if (!entry.optional()) {
+                    return false;
                 }
-                return false;
-            }
-            // Check overlap
-            if (blockToInstanceMap.containsKey(target.getLocation())) {
-                return false;
             }
         }
         return true;
     }
     
-    /**
-     * Rotates a vector assuming original is NORTH facing.
-     */
     private Vector rotateVector(Vector v, BlockFace facing) {
-        int x = v.getBlockX();
-        int y = v.getBlockY();
-        int z = v.getBlockZ();
-        
-        return switch (facing) {
-            case NORTH -> new Vector(x, y, z); // No rotation
-            case EAST -> new Vector(-z, y, x); // 90 deg CW
-            case SOUTH -> new Vector(-x, y, -z); // 180 deg
-            case WEST -> new Vector(z, y, -x); // 270 deg CW
-            default -> new Vector(x, y, z);
-        };
-    }
-    
-    public boolean isInstanceActive(MultiblockInstance instance) {
-        return activeInstances.containsKey(instance.anchorLocation()) && activeInstances.get(instance.anchorLocation()) == instance;
+        // Assume default is NORTH
+        switch (facing) {
+            case NORTH: return v.clone();
+            case EAST: return new Vector(-v.getZ(), v.getY(), v.getX());
+            case SOUTH: return new Vector(-v.getX(), v.getY(), -v.getZ());
+            case WEST: return new Vector(v.getZ(), v.getY(), -v.getX());
+            default: return v.clone();
+        }
     }
 
     public void registerInstance(MultiblockInstance instance) {
         activeInstances.put(instance.anchorLocation(), instance);
-        // Map all blocks
-        // Map controller (at 0,0,0 relative to anchor, which IS the anchor)
-        blockToInstanceMap.put(instance.anchorLocation(), instance); 
-        
-        for (PatternEntry entry : instance.type().pattern()) {
-            Vector offset = rotateVector(entry.offset(), instance.facing());
-            Location loc = instance.anchorLocation().clone().add(offset);
-            blockToInstanceMap.put(loc, instance);
-        }
-        holograms.spawnHologram(instance);
-    }
-    
-    public void destroyInstance(MultiblockInstance instance) {
-        if (instance == null) return;
-        activeInstances.remove(instance.anchorLocation());
-        metrics.incrementDestroyed();
-        
-        // Unmap blocks
-        blockToInstanceMap.remove(instance.anchorLocation());
-        for (PatternEntry entry : instance.type().pattern()) {
-            Vector offset = rotateVector(entry.offset(), instance.facing());
-            Location loc = instance.anchorLocation().clone().add(offset);
-            blockToInstanceMap.remove(loc);
-        }
-        
-        holograms.removeHologram(instance);
-        
-        // Remove from storage
-        if (storage != null && instance.type().persistent()) {
-            storage.deleteInstance(instance);
-        }
-    }
-    
-    public void updateInstanceState(MultiblockInstance instance, MultiblockState newState) {
-        instance.setState(newState);
-        // Since MultiblockInstance is now mutable for state/variables, we don't need to replace it in maps.
-        // We just need to persist the change.
-        
-        // Persist change
-        if (storage != null && instance.type().persistent()) {
-            // Delete and re-save to update state in DB (inefficient but works for now)
-            storage.deleteInstance(instance);
-            storage.saveInstance(instance);
-        }
+        blockToInstanceMap.put(instance.anchorLocation(), instance);
+        // Map other blocks?
+        // For simple interaction handling, we mostly care about controller.
     }
     
     public Optional<MultiblockInstance> getInstanceAt(Location loc) {
         return Optional.ofNullable(blockToInstanceMap.get(loc));
+    }
+    
+    public void destroyInstance(MultiblockInstance instance) {
+        activeInstances.remove(instance.anchorLocation());
+        blockToInstanceMap.remove(instance.anchorLocation());
+        holograms.removeHologram(instance);
+        
+        if (storage != null && instance.type().persistent()) {
+            storage.deleteInstance(instance);
+        }
+        
+        metrics.incrementDestroyed();
+    }
+    
+    public void updateInstanceState(MultiblockInstance instance, MultiblockState newState) {
+        instance.setState(newState);
+        if (storage != null && instance.type().persistent()) {
+            storage.saveInstance(instance);
+        }
+    }
+    
+    public boolean isInstanceActive(MultiblockInstance instance) {
+        return activeInstances.containsKey(instance.anchorLocation());
     }
 }

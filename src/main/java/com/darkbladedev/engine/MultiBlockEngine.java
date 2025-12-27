@@ -17,6 +17,8 @@ import java.io.File;
 import java.util.Collection;
 import java.util.List;
 
+import com.darkbladedev.engine.debug.DebugManager;
+
 public class MultiBlockEngine extends JavaPlugin {
 
     private static MultiBlockEngine instance;
@@ -24,6 +26,7 @@ public class MultiBlockEngine extends JavaPlugin {
     private MultiblockParser parser;
     private StorageManager storage;
     private MultiblockAPIImpl api;
+    private DebugManager debugManager;
 
     @Override
     public void onEnable() {
@@ -45,6 +48,7 @@ public class MultiBlockEngine extends JavaPlugin {
         storage = new SqlStorage(this);
         storage.init();
         manager.setStorage(storage);
+        debugManager = new DebugManager(this);
         
         // Ensure directory exists
         File multiblockDir = new File(getDataFolder(), "multiblocks");
@@ -90,6 +94,9 @@ public class MultiBlockEngine extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        if (debugManager != null) {
+            debugManager.stopAll();
+        }
         if (manager != null) {
             manager.unregisterAll();
         }
@@ -98,7 +105,7 @@ public class MultiBlockEngine extends JavaPlugin {
         }
         getLogger().info("MultiBlockEngine stopping...");
     }
-
+    
     public static MultiBlockEngine getInstance() {
         return instance;
     }
@@ -107,15 +114,15 @@ public class MultiBlockEngine extends JavaPlugin {
         return manager;
     }
     
-    public StorageManager getStorage() {
-        return storage;
+    public MultiblockParser getParser() {
+        return parser;
     }
     
     public MultiblockAPI getAPI() {
         return api;
     }
-
-    public MultiblockParser getParser() {
-        return parser;
+    
+    public DebugManager getDebugManager() {
+        return debugManager;
     }
 }

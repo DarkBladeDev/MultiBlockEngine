@@ -60,6 +60,42 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
         return true;
     }
 
+    private void handleDebug(Player player, String[] args) {
+        if (args.length < 2) {
+            player.sendMessage(ChatColor.RED + "Usage: /mb debug <id> [player]");
+            return;
+        }
+        
+        String id = args[1];
+        Optional<MultiblockType> typeOpt = plugin.getManager().getType(id);
+        
+        if (typeOpt.isEmpty()) {
+            player.sendMessage(ChatColor.RED + "Multiblock type not found: " + id);
+            return;
+        }
+        MultiblockType type = typeOpt.get();
+        
+        // Target player
+        Player targetPlayer = player;
+        if (args.length >= 3) {
+            targetPlayer = org.bukkit.Bukkit.getPlayer(args[2]);
+            if (targetPlayer == null) {
+                player.sendMessage(ChatColor.RED + "Player not found: " + args[2]);
+                return;
+            }
+        }
+        
+        // Raytrace for anchor
+        Block targetBlock = targetPlayer.getTargetBlockExact(10);
+        if (targetBlock == null || targetBlock.getType().isAir()) {
+            player.sendMessage(ChatColor.RED + "You must look at a block to use as the controller anchor.");
+            return;
+        }
+        
+        // Start session
+        plugin.getDebugManager().startSession(targetPlayer, type, targetBlock.getLocation());
+    }
+
     private void handleReload(Player player) {
         player.sendMessage(ChatColor.YELLOW + "Reloading MultiBlockEngine...");
         
