@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -46,12 +47,14 @@ public class AddonManager {
         AddonDescriptor descriptor,
         MultiblockAddon addon,
         URLClassLoader classLoader,
-        Logger logger
+        Logger logger,
+        Path dataFolder
     ) {}
 
     private final MultiBlockEngine plugin;
     private final MultiblockAPI api;
     private final File addonFolder;
+    private final AddonDataDirectorySystem dataDirectorySystem;
     private final Map<String, LoadedAddon> loadedAddons = new HashMap<>();
     private final Map<String, AddonState> states = new HashMap<>();
     private final ArrayDeque<String> enableOrder = new ArrayDeque<>();
@@ -60,11 +63,19 @@ public class AddonManager {
         this.plugin = plugin;
         this.api = api;
         this.addonFolder = new File(plugin.getDataFolder(), "addons");
+        this.dataDirectorySystem = new AddonDataDirectorySystem(plugin, this.addonFolder.toPath());
     }
 
     public void loadAddons() {
         if (!addonFolder.exists()) {
             addonFolder.mkdirs();
+        }
+
+        try {
+            dataDirectorySystem.ensureRootDirectory();
+        } catch (Exception e) {
+            plugin.getLogger().log(Level.SEVERE, "[MultiBlockEngine][AddonFS] Failed to initialize addons root folder: " + addonFolder.getAbsolutePath(), e);
+            return;
         }
 
         File[] files = addonFolder.listFiles((dir, name) -> name.endsWith(".jar"));
@@ -163,7 +174,24 @@ public class AddonManager {
                 return;
             }
 
-            SimpleAddonContext context = new SimpleAddonContext(descriptor.id(), plugin, api, addonLogger);
+            Path dataFolder;
+            try {
+                dataFolder = dataDirectorySystem.ensureAddonDataFolder(descriptor.id());
+            } catch (Exception e) {
+                Path failedPath;
+                try {
+                    String folderName = AddonDataDirectorySystem.normalizeAddonFolderName(descriptor.id());
+                    failedPath = addonFolder.toPath().resolve(folderName).normalize();
+                } catch (Exception ignored) {
+                    failedPath = addonFolder.toPath();
+                }
+                dataDirectorySystem.logFs(descriptor.id(), "LOAD", failedPath, e, "addon failed");
+                failAddon(descriptor.id(), AddonException.Phase.LOAD, "Failed to prepare addon data folder", e, true);
+                close(loader);
+                return;
+            }
+
+            SimpleAddonContext context = new SimpleAddonContext(descriptor.id(), plugin, api, addonLogger, dataFolder);
             try {
                 addon.onLoad(context);
             } catch (AddonException e) {
@@ -176,7 +204,7 @@ public class AddonManager {
                 return;
             }
 
-            loadedAddons.put(descriptor.id(), new LoadedAddon(descriptor, addon, loader, addonLogger));
+            loadedAddons.put(descriptor.id(), new LoadedAddon(descriptor, addon, loader, addonLogger, dataFolder));
             states.put(descriptor.id(), AddonState.LOADED);
             plugin.getLogger().info("[MultiBlockEngine][Addon:" + descriptor.id() + "][LOAD] Loaded v" + descriptor.version());
         }

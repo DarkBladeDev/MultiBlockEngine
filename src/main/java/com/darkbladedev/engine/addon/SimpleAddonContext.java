@@ -10,6 +10,7 @@ import com.darkbladedev.engine.model.action.Action;
 import com.darkbladedev.engine.model.condition.Condition;
 import org.bukkit.event.Listener;
 
+import java.nio.file.Path;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.logging.Logger;
@@ -20,13 +21,15 @@ public class SimpleAddonContext implements AddonContext {
     private final MultiBlockEngine plugin;
     private final MultiblockAPI api;
     private final Logger logger;
+    private final Path dataFolder;
 
-    public SimpleAddonContext(String addonId, MultiBlockEngine plugin, MultiblockAPI api, Logger logger) {
+    public SimpleAddonContext(String addonId, MultiBlockEngine plugin, MultiblockAPI api, Logger logger, Path dataFolder) {
         this.addonId = addonId;
         this.addonNamespace = namespaceOf(addonId);
         this.plugin = plugin;
         this.api = api;
         this.logger = logger;
+        this.dataFolder = dataFolder;
     }
 
     @Override
@@ -52,6 +55,11 @@ public class SimpleAddonContext implements AddonContext {
     @Override
     public MultiblockAPI getAPI() {
         return api;
+    }
+
+    @Override
+    public Path getDataFolder() {
+        return dataFolder;
     }
 
     @Override

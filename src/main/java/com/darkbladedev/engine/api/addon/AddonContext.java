@@ -8,6 +8,7 @@ import com.darkbladedev.engine.model.action.Action;
 import com.darkbladedev.engine.model.condition.Condition;
 import org.bukkit.event.Listener;
 
+import java.nio.file.Path;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.logging.Logger;
@@ -18,6 +19,8 @@ public interface AddonContext {
     String getEngineVersion();
     int getApiVersion();
     MultiblockAPI getAPI();
+
+    Path getDataFolder();
     
     void registerAction(String key, Function<Map<String, Object>, Action> factory);
     void registerCondition(String key, Function<Map<String, Object>, Condition> factory);
