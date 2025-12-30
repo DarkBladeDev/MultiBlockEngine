@@ -17,11 +17,4 @@ jobs:
       - name: Run Release Please
         uses: googleapis/release-please-action@v4
         with:
-          release-type: simple
-          changelog-types: |
-            [
-              { "type": "feat", "section": "🚀 Features" },
-              { "type": "fix", "section": "🐛 Fixes" },
-              { "type": "perf", "section": "⚡ Performance" },
-              { "type": "refactor", "section": "🧹 Refactors" }
-            ]
+          release-type: java
