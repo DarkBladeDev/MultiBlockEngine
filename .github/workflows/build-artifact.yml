@@ -1,9 +1,8 @@
-name: Build & Attach Artifact to Release
+name: Build & Attach Artifact
 
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [created]
 
 jobs:
   build:
