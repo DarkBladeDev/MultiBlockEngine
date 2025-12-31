@@ -21,6 +21,9 @@ public interface AddonContext {
     MultiblockAPI getAPI();
 
     Path getDataFolder();
+
+    <T> void registerService(Class<T> serviceType, T service);
+    <T> T getService(Class<T> serviceType);
     
     void registerAction(String key, Function<Map<String, Object>, Action> factory);
     void registerCondition(String key, Function<Map<String, Object>, Condition> factory);

@@ -4,6 +4,7 @@ import com.darkbladedev.engine.MultiBlockEngine;
 import com.darkbladedev.engine.api.MultiblockAPI;
 import com.darkbladedev.engine.api.addon.AddonException;
 import com.darkbladedev.engine.api.addon.MultiblockAddon;
+import com.darkbladedev.engine.api.addon.Version;
 
 import java.io.File;
 import java.io.IOException;
@@ -11,8 +12,10 @@ import java.io.InputStream;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Path;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.ArrayDeque;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -29,22 +32,17 @@ import java.util.Properties;
 public class AddonManager {
 
     public enum AddonState {
+        DISCOVERED,
         LOADED,
         ENABLED,
-        DISABLED,
-        FAILED
+        FAILED,
+        DISABLED
     }
 
-    private record AddonDescriptor(
-        String id,
-        String version,
-        String mainClass,
-        int apiVersion,
-        List<String> depends
-    ) {}
+    private record DiscoveredAddon(File file, AddonMetadata metadata) {}
 
     private record LoadedAddon(
-        AddonDescriptor descriptor,
+        AddonMetadata metadata,
         MultiblockAddon addon,
         URLClassLoader classLoader,
         Logger logger,
@@ -55,15 +53,21 @@ public class AddonManager {
     private final MultiblockAPI api;
     private final File addonFolder;
     private final AddonDataDirectorySystem dataDirectorySystem;
+    private final AddonServiceRegistry serviceRegistry;
+    private final AddonDependencyResolver dependencyResolver;
+    private final Map<String, DiscoveredAddon> discoveredAddons = new HashMap<>();
     private final Map<String, LoadedAddon> loadedAddons = new HashMap<>();
     private final Map<String, AddonState> states = new HashMap<>();
     private final ArrayDeque<String> enableOrder = new ArrayDeque<>();
+    private List<String> resolvedOrder = List.of();
 
     public AddonManager(MultiBlockEngine plugin, MultiblockAPI api) {
         this.plugin = plugin;
         this.api = api;
         this.addonFolder = new File(plugin.getDataFolder(), "addons");
         this.dataDirectorySystem = new AddonDataDirectorySystem(plugin, this.addonFolder.toPath());
+        this.serviceRegistry = new AddonServiceRegistry();
+        this.dependencyResolver = new AddonDependencyResolver();
     }
 
     public void loadAddons() {
@@ -81,11 +85,77 @@ public class AddonManager {
         File[] files = addonFolder.listFiles((dir, name) -> name.endsWith(".jar"));
         if (files == null) return;
 
+        Arrays.sort(files, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+
+        Map<String, List<DiscoveredAddon>> candidates = new HashMap<>();
+
         for (File file : files) {
             try {
-                loadAddon(file);
+                AddonMetadata metadata = readMetadata(file);
+                if (metadata == null) {
+                    continue;
+                }
+
+                candidates.computeIfAbsent(metadata.id(), k -> new ArrayList<>()).add(new DiscoveredAddon(file, metadata));
             } catch (Exception e) {
                 plugin.getLogger().log(Level.SEVERE, "Failed to load addon from file: " + file.getName(), e);
+            }
+        }
+
+        discoveredAddons.clear();
+        loadedAddons.clear();
+        states.clear();
+        enableOrder.clear();
+        resolvedOrder = List.of();
+
+        for (Map.Entry<String, List<DiscoveredAddon>> entry : candidates.entrySet()) {
+            String id = entry.getKey();
+            List<DiscoveredAddon> list = entry.getValue();
+            if (list.size() > 1) {
+                StringBuilder sb = new StringBuilder();
+                for (DiscoveredAddon d : list) {
+                    if (!sb.isEmpty()) sb.append(", ");
+                    sb.append(d.file().getName()).append("@").append(d.metadata().version());
+                }
+                plugin.getLogger().severe("[MultiBlockEngine] Addon " + id + " FAILED\nReason: Multiple versions detected (remove duplicates): " + sb);
+                states.put(id, AddonState.FAILED);
+                continue;
+            }
+
+            DiscoveredAddon discovered = list.get(0);
+            discoveredAddons.put(id, discovered);
+            states.put(id, AddonState.DISCOVERED);
+        }
+
+        Map<String, AddonMetadata> metadataById = new HashMap<>();
+        for (Map.Entry<String, DiscoveredAddon> e : discoveredAddons.entrySet()) {
+            metadataById.put(e.getKey(), e.getValue().metadata());
+        }
+
+        AddonDependencyResolver.Resolution resolution = dependencyResolver.resolve(metadataById);
+        for (String warning : resolution.warnings()) {
+            plugin.getLogger().warning(warning);
+        }
+        for (Map.Entry<String, String> fail : resolution.failures().entrySet()) {
+            states.put(fail.getKey(), AddonState.FAILED);
+            plugin.getLogger().severe("[MultiBlockEngine] Addon " + fail.getKey() + " FAILED\nReason: " + fail.getValue());
+        }
+
+        resolvedOrder = resolution.loadOrder();
+        for (String id : resolvedOrder) {
+            if (states.getOrDefault(id, AddonState.DISABLED) == AddonState.FAILED) {
+                continue;
+            }
+
+            DiscoveredAddon discovered = discoveredAddons.get(id);
+            if (discovered == null) {
+                continue;
+            }
+
+            try {
+                loadAddon(discovered);
+            } catch (Exception e) {
+                failAddon(id, AddonException.Phase.LOAD, "Unhandled exception during addon load", e, true);
             }
         }
     }
@@ -99,13 +169,14 @@ public class AddonManager {
             addonId = "unknown";
         }
 
-        LoadedAddon loaded = loadedAddons.get(addonId);
         String header = "[MultiBlockEngine][Addon:" + addonId + "][" + phase.name() + "] ";
 
         if (cause == null) {
             plugin.getLogger().severe(header + message);
-        } else {
+        } else if (shouldLogStacktrace(cause)) {
             plugin.getLogger().log(Level.SEVERE, header + message + " Cause: " + cause.getClass().getSimpleName() + ": " + cause.getMessage(), cause);
+        } else {
+            plugin.getLogger().severe(header + message + " Cause: " + cause.getClass().getSimpleName() + ": " + cause.getMessage());
         }
 
         boolean markFailed = fatal || phase == AddonException.Phase.LOAD || phase == AddonException.Phase.ENABLE;
@@ -113,6 +184,7 @@ public class AddonManager {
             states.put(addonId, AddonState.FAILED);
         }
 
+        LoadedAddon loaded = loadedAddons.get(addonId);
         if (fatal && loaded != null) {
             try {
                 loaded.addon().onDisable();
@@ -122,153 +194,244 @@ public class AddonManager {
         }
     }
 
-    private void loadAddon(File file) throws IOException {
+    private void loadAddon(DiscoveredAddon discovered) throws IOException {
+        AddonMetadata metadata = discovered.metadata();
+        String addonId = metadata.id();
+        if (states.getOrDefault(addonId, AddonState.DISABLED) == AddonState.FAILED) {
+            return;
+        }
+
+        URL[] urls = {discovered.file().toURI().toURL()};
+        URLClassLoader loader = new URLClassLoader(urls, plugin.getClass().getClassLoader());
+        Logger addonLogger = Logger.getLogger("MultiBlockEngine-Addon-" + addonId);
+        addonLogger.setParent(plugin.getLogger());
+
+        MultiblockAddon addon;
+        try {
+            Class<?> clazz = loader.loadClass(metadata.mainClass());
+            if (!MultiblockAddon.class.isAssignableFrom(clazz)) {
+                failAddon(addonId, AddonException.Phase.LOAD, "Main class does not implement MultiblockAddon: " + metadata.mainClass(), null, true);
+                close(loader);
+                return;
+            }
+            addon = (MultiblockAddon) clazz.getDeclaredConstructor().newInstance();
+        } catch (Throwable t) {
+            failAddon(addonId, AddonException.Phase.LOAD, "Failed to instantiate addon main class: " + metadata.mainClass(), t, true);
+            close(loader);
+            return;
+        }
+
+        String reportedId;
+        try {
+            reportedId = Objects.requireNonNull(addon.getId(), "addon.getId()");
+        } catch (Throwable t) {
+            failAddon(addonId, AddonException.Phase.LOAD, "Addon getId() failed", t, true);
+            close(loader);
+            return;
+        }
+
+        if (!reportedId.equals(addonId)) {
+            failAddon(addonId, AddonException.Phase.LOAD, "Addon id mismatch. addon.properties=" + addonId + " getId()=" + reportedId, null, true);
+            close(loader);
+            return;
+        }
+
+        String reportedVersion;
+        try {
+            reportedVersion = Objects.requireNonNull(addon.getVersion(), "addon.getVersion()");
+        } catch (Throwable t) {
+            failAddon(addonId, AddonException.Phase.LOAD, "Addon getVersion() failed", t, true);
+            close(loader);
+            return;
+        }
+
+        if (!reportedVersion.trim().equals(metadata.version().raw())) {
+            failAddon(addonId, AddonException.Phase.LOAD, "Addon version mismatch. addon.properties=" + metadata.version().raw() + " getVersion()=" + reportedVersion.trim(), null, true);
+            close(loader);
+            return;
+        }
+
+        Path dataFolder;
+        try {
+            dataFolder = dataDirectorySystem.ensureAddonDataFolder(addonId);
+        } catch (Exception e) {
+            Path failedPath;
+            try {
+                String folderName = AddonDataDirectorySystem.normalizeAddonFolderName(addonId);
+                failedPath = addonFolder.toPath().resolve(folderName).normalize();
+            } catch (Exception ignored) {
+                failedPath = addonFolder.toPath();
+            }
+            dataDirectorySystem.logFs(addonId, "LOAD", failedPath, e, "addon failed");
+            failAddon(addonId, AddonException.Phase.LOAD, "Failed to prepare addon data folder", e, true);
+            close(loader);
+            return;
+        }
+
+        SimpleAddonContext context = new SimpleAddonContext(addonId, plugin, api, addonLogger, dataFolder, this, serviceRegistry);
+        try {
+            addon.onLoad(context);
+        } catch (AddonException e) {
+            failAddon(addonId, AddonException.Phase.LOAD, e.getMessage(), e.getCause(), e.isFatal());
+            close(loader);
+            return;
+        } catch (Throwable t) {
+            failAddon(addonId, AddonException.Phase.LOAD, "Unhandled exception during onLoad", t, true);
+            close(loader);
+            return;
+        }
+
+        loadedAddons.put(addonId, new LoadedAddon(metadata, addon, loader, addonLogger, dataFolder));
+        states.put(addonId, AddonState.LOADED);
+        plugin.getLogger().info("[MultiBlockEngine][Addon:" + addonId + "][LOAD] Loaded v" + metadata.version());
+    }
+
+    private AddonMetadata readMetadata(File file) throws IOException {
         try (JarFile jar = new JarFile(file)) {
-            AddonDescriptor descriptor = readDescriptor(jar, file.getName());
-            if (descriptor == null) {
-                return;
+            JarEntry entry = jar.getJarEntry("addon.properties");
+            if (entry == null) {
+                plugin.getLogger().warning("[MultiBlockEngine][AddonLoader] Skipping " + file.getName() + ": missing addon.properties");
+                return null;
             }
 
-            if (loadedAddons.containsKey(descriptor.id())) {
-                failAddon(descriptor.id(), AddonException.Phase.LOAD, "Duplicate addon ID: " + descriptor.id(), null, true);
-                return;
+            Properties props = new Properties();
+            try (InputStream in = jar.getInputStream(entry)) {
+                props.load(in);
             }
 
-            if (descriptor.apiVersion() != MultiBlockEngine.getApiVersion()) {
-                failAddon(descriptor.id(), AddonException.Phase.LOAD, "Incompatible API version. Addon=" + descriptor.apiVersion() + " Engine=" + MultiBlockEngine.getApiVersion(), null, true);
-                return;
-            }
+            String id = trimToNull(props.getProperty("id"));
+            String versionStr = trimToNull(props.getProperty("version"));
+            String main = trimToNull(props.getProperty("main"));
 
-            URL[] urls = {file.toURI().toURL()};
-            URLClassLoader loader = new URLClassLoader(urls, plugin.getClass().getClassLoader());
-            Logger addonLogger = Logger.getLogger("MultiBlockEngine-Addon-" + descriptor.id());
-            addonLogger.setParent(plugin.getLogger());
-
-            MultiblockAddon addon;
-            try {
-                Class<?> clazz = loader.loadClass(descriptor.mainClass());
-                if (!MultiblockAddon.class.isAssignableFrom(clazz)) {
-                    failAddon(descriptor.id(), AddonException.Phase.LOAD, "Main class does not implement MultiblockAddon: " + descriptor.mainClass(), null, true);
-                    close(loader);
-                    return;
+            if (main == null) {
+                Attributes attributes = jar.getManifest() != null ? jar.getManifest().getMainAttributes() : null;
+                if (attributes != null) {
+                    main = trimToNull(attributes.getValue("Multiblock-Addon-Main"));
                 }
-                addon = (MultiblockAddon) clazz.getDeclaredConstructor().newInstance();
-            } catch (Throwable t) {
-                failAddon(descriptor.id(), AddonException.Phase.LOAD, "Failed to instantiate addon main class: " + descriptor.mainClass(), t, true);
-                close(loader);
-                return;
             }
 
-            String reportedId;
+            if (id == null || versionStr == null || main == null) {
+                plugin.getLogger().warning("[MultiBlockEngine][AddonLoader] Skipping " + file.getName() + ": addon.properties requires id, version, main");
+                return null;
+            }
+
+            if (!id.matches("[a-z0-9][a-z0-9_\\-]*(?::[a-z0-9][a-z0-9_\\-]*)?")) {
+                plugin.getLogger().warning("[MultiBlockEngine][AddonLoader] Skipping " + file.getName() + ": invalid id '" + id + "'");
+                return null;
+            }
+
+            Version version;
             try {
-                reportedId = Objects.requireNonNull(addon.getId(), "addon.getId()");
-            } catch (Throwable t) {
-                failAddon(descriptor.id(), AddonException.Phase.LOAD, "Addon getId() failed", t, true);
-                close(loader);
-                return;
+                version = Version.parse(versionStr);
+            } catch (IllegalArgumentException e) {
+                plugin.getLogger().warning("[MultiBlockEngine][AddonLoader] Skipping " + file.getName() + ": invalid version '" + versionStr + "'");
+                return null;
             }
 
-            if (!reportedId.equals(descriptor.id())) {
-                failAddon(descriptor.id(), AddonException.Phase.LOAD, "Addon id mismatch. Descriptor=" + descriptor.id() + " getId()=" + reportedId, null, true);
-                close(loader);
-                return;
+            int apiVersion;
+            String apiStr = trimToNull(props.getProperty("api"));
+            if (apiStr == null) {
+                apiStr = trimToNull(props.getProperty("apiVersion"));
             }
 
-            Path dataFolder;
+            if (apiStr == null) {
+                plugin.getLogger().warning("[MultiBlockEngine][AddonLoader] Skipping " + file.getName() + ": missing api");
+                return null;
+            }
+
             try {
-                dataFolder = dataDirectorySystem.ensureAddonDataFolder(descriptor.id());
-            } catch (Exception e) {
-                Path failedPath;
-                try {
-                    String folderName = AddonDataDirectorySystem.normalizeAddonFolderName(descriptor.id());
-                    failedPath = addonFolder.toPath().resolve(folderName).normalize();
-                } catch (Exception ignored) {
-                    failedPath = addonFolder.toPath();
+                apiVersion = Integer.parseInt(apiStr);
+            } catch (NumberFormatException ignored) {
+                plugin.getLogger().warning("[MultiBlockEngine][AddonLoader] Skipping " + file.getName() + ": invalid api version '" + apiStr + "'");
+                return null;
+            }
+
+            Map<String, Version> required = parseDependencyMap(id, trimToNull(props.getProperty("depends.required")), file.getName());
+            Map<String, Version> optional = parseDependencyMap(id, trimToNull(props.getProperty("depends.optional")), file.getName());
+
+            String legacy = trimToNull(props.getProperty("depends"));
+            if (legacy != null && required.isEmpty()) {
+                Version min = Version.parse("0.0.0");
+                Map<String, Version> legacyReq = new HashMap<>();
+                for (String part : legacy.split("[,; ]+")) {
+                    String dep = trimToNull(part);
+                    if (dep == null) continue;
+                    if (!dep.matches("[a-z0-9][a-z0-9_\\-]*(?::[a-z0-9][a-z0-9_\\-]*)?")) {
+                        plugin.getLogger().warning("[MultiBlockEngine][AddonLoader] Invalid legacy depends entry '" + dep + "' in " + id);
+                        continue;
+                    }
+                    if (dep.equals(id)) {
+                        plugin.getLogger().warning("[MultiBlockEngine][AddonLoader] Ignoring self-dependency in " + id);
+                        continue;
+                    }
+                    legacyReq.put(dep, min);
                 }
-                dataDirectorySystem.logFs(descriptor.id(), "LOAD", failedPath, e, "addon failed");
-                failAddon(descriptor.id(), AddonException.Phase.LOAD, "Failed to prepare addon data folder", e, true);
-                close(loader);
-                return;
+                required = Map.copyOf(legacyReq);
             }
 
-            SimpleAddonContext context = new SimpleAddonContext(descriptor.id(), plugin, api, addonLogger, dataFolder);
-            try {
-                addon.onLoad(context);
-            } catch (AddonException e) {
-                failAddon(descriptor.id(), AddonException.Phase.LOAD, e.getMessage(), e.getCause(), e.isFatal());
-                close(loader);
-                return;
-            } catch (Throwable t) {
-                failAddon(descriptor.id(), AddonException.Phase.LOAD, "Unhandled exception during onLoad", t, true);
-                close(loader);
-                return;
+            if (!required.isEmpty() && !optional.isEmpty()) {
+                for (String depId : required.keySet()) {
+                    if (optional.containsKey(depId)) {
+                        plugin.getLogger().warning("[MultiBlockEngine][AddonLoader] Optional dependency '" + depId + "' overridden by required in " + id);
+                    }
+                }
+                Map<String, Version> filteredOpt = new HashMap<>(optional);
+                filteredOpt.keySet().removeAll(required.keySet());
+                optional = Map.copyOf(filteredOpt);
             }
 
-            loadedAddons.put(descriptor.id(), new LoadedAddon(descriptor, addon, loader, addonLogger, dataFolder));
-            states.put(descriptor.id(), AddonState.LOADED);
-            plugin.getLogger().info("[MultiBlockEngine][Addon:" + descriptor.id() + "][LOAD] Loaded v" + descriptor.version());
+            List<String> dependsIds = new ArrayList<>(required.keySet());
+            dependsIds.addAll(optional.keySet());
+            dependsIds = List.copyOf(dependsIds);
+
+            return new AddonMetadata(id, version, apiVersion, main, required, optional, dependsIds);
         }
     }
 
-    private AddonDescriptor readDescriptor(JarFile jar, String fileName) throws IOException {
-        JarEntry entry = jar.getJarEntry("addon.properties");
-        if (entry == null) {
-            plugin.getLogger().warning("[MultiBlockEngine][AddonLoader] Skipping " + fileName + ": missing addon.properties");
-            return null;
+    private Map<String, Version> parseDependencyMap(String ownerId, String raw, String fileName) {
+        if (raw == null || raw.isBlank()) {
+            return Map.of();
         }
 
-        Properties props = new Properties();
-        try (InputStream in = jar.getInputStream(entry)) {
-            props.load(in);
-        }
+        Map<String, Version> map = new HashMap<>();
+        for (String part : raw.split("[,; ]+")) {
+            String token = trimToNull(part);
+            if (token == null) continue;
 
-        String id = trimToNull(props.getProperty("id"));
-        String version = trimToNull(props.getProperty("version"));
-        String main = trimToNull(props.getProperty("main"));
-
-        if (main == null) {
-            Attributes attributes = jar.getManifest() != null ? jar.getManifest().getMainAttributes() : null;
-            if (attributes != null) {
-                main = trimToNull(attributes.getValue("Multiblock-Addon-Main"));
+            int idx = token.indexOf(">=");
+            if (idx < 1 || idx + 2 >= token.length()) {
+                throw new IllegalArgumentException("Invalid addon.properties in " + ownerId + ": Invalid dependency format: " + token + " (expected <id>>=<version>)");
             }
-        }
 
-        if (id == null || version == null || main == null) {
-            plugin.getLogger().warning("[MultiBlockEngine][AddonLoader] Skipping " + fileName + ": addon.properties requires id, version, main");
-            return null;
-        }
+            String depId = trimToNull(token.substring(0, idx));
+            String verStr = trimToNull(token.substring(idx + 2));
 
-        if (!id.matches("[a-z0-9][a-z0-9_\\-]*(?::[a-z0-9][a-z0-9_\\-]*)?")) {
-            plugin.getLogger().warning("[MultiBlockEngine][AddonLoader] Skipping " + fileName + ": invalid id '" + id + "'");
-            return null;
-        }
+            if (depId == null || verStr == null) {
+                throw new IllegalArgumentException("Invalid addon.properties in " + ownerId + ": Invalid dependency format: " + token + " (expected <id>>=<version>)");
+            }
 
-        int apiVersion = MultiBlockEngine.getApiVersion();
-        String api = trimToNull(props.getProperty("api"));
-        if (api == null) {
-            api = trimToNull(props.getProperty("apiVersion"));
-        }
-        if (api != null) {
+            if (!depId.matches("[a-z0-9][a-z0-9_\\-]*(?::[a-z0-9][a-z0-9_\\-]*)?")) {
+                throw new IllegalArgumentException("Invalid addon.properties in " + ownerId + ": Invalid dependency id: " + depId);
+            }
+
+            if (depId.equals(ownerId)) {
+                throw new IllegalArgumentException("Invalid addon.properties in " + ownerId + ": Self dependency not allowed");
+            }
+
+            Version min;
             try {
-                apiVersion = Integer.parseInt(api);
-            } catch (NumberFormatException ignored) {
-                plugin.getLogger().warning("[MultiBlockEngine][AddonLoader] Skipping " + fileName + ": invalid api version '" + api + "'");
-                return null;
+                min = Version.parse(verStr);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("Invalid addon.properties in " + ownerId + ": Invalid dependency version: " + depId + ">=" + verStr);
             }
+
+            if (map.containsKey(depId)) {
+                plugin.getLogger().warning("[MultiBlockEngine][AddonLoader] Duplicate dependency '" + depId + "' in " + ownerId + " (" + fileName + ") - last one wins");
+            }
+            map.put(depId, min);
         }
 
-        List<String> depends = new ArrayList<>();
-        String dependsStr = trimToNull(props.getProperty("depends"));
-        if (dependsStr != null) {
-            for (String part : dependsStr.split("[,; ]+")) {
-                String dep = trimToNull(part);
-                if (dep != null) {
-                    depends.add(dep);
-                }
-            }
-        }
-
-        return new AddonDescriptor(id, version, main, apiVersion, List.copyOf(depends));
+        return Map.copyOf(map);
     }
 
     private static String trimToNull(String s) {
@@ -285,64 +448,31 @@ public class AddonManager {
     }
 
     public void enableAddons() {
-        Set<String> enabled = new HashSet<>();
-        Set<String> pending = new HashSet<>(loadedAddons.keySet());
-
-        boolean progressed = true;
-        while (progressed && !pending.isEmpty()) {
-            progressed = false;
-
-            List<String> toEnable = new ArrayList<>();
-            for (String id : pending) {
-                LoadedAddon addon = loadedAddons.get(id);
-                if (addon == null) continue;
-                if (states.getOrDefault(id, AddonState.DISABLED) != AddonState.LOADED) continue;
-
-                boolean depsOk = true;
-                for (String dep : addon.descriptor().depends()) {
-                    if (!enabled.contains(dep)) {
-                        depsOk = false;
-                        break;
-                    }
-                }
-                if (depsOk) {
-                    toEnable.add(id);
-                }
-            }
-
-            for (String id : toEnable) {
-                progressed = true;
-                pending.remove(id);
-
-                LoadedAddon loaded = loadedAddons.get(id);
-                if (loaded == null) continue;
-
-                try {
-                    loaded.addon().onEnable();
-                    states.put(id, AddonState.ENABLED);
-                    enabled.add(id);
-                    enableOrder.addLast(id);
-                    plugin.getLogger().info("[MultiBlockEngine][Addon:" + id + "][ENABLE] Enabled");
-                } catch (AddonException e) {
-                    failAddon(id, AddonException.Phase.ENABLE, e.getMessage(), e.getCause(), e.isFatal());
-                } catch (Throwable t) {
-                    failAddon(id, AddonException.Phase.ENABLE, "Unhandled exception during onEnable", t, true);
-                }
-            }
-        }
-
-        for (String id : pending) {
+        for (String id : resolvedOrder) {
             LoadedAddon loaded = loadedAddons.get(id);
             if (loaded == null) continue;
+            if (states.getOrDefault(id, AddonState.DISABLED) != AddonState.LOADED) continue;
 
-            StringBuilder missing = new StringBuilder();
-            for (String dep : loaded.descriptor().depends()) {
-                if (states.getOrDefault(dep, AddonState.DISABLED) != AddonState.ENABLED) {
-                    if (!missing.isEmpty()) missing.append(", ");
-                    missing.append(dep);
-                }
+            String missing = missingRequiredEnabledDependencies(loaded.metadata());
+            if (missing != null) {
+                plugin.getLogger().severe("[MultiBlockEngine] Addon " + id + " FAILED\nReason: " + missing);
+                states.put(id, AddonState.FAILED);
+                close(loaded.classLoader());
+                continue;
             }
-            failAddon(id, AddonException.Phase.ENABLE, "Missing or failed dependencies: " + missing, null, true);
+
+            try {
+                loaded.addon().onEnable();
+                states.put(id, AddonState.ENABLED);
+                enableOrder.addLast(id);
+                plugin.getLogger().info("[MultiBlockEngine][Addon:" + id + "][ENABLE] Enabled");
+            } catch (AddonException e) {
+                failAddon(id, AddonException.Phase.ENABLE, e.getMessage(), e.getCause(), e.isFatal());
+                close(loaded.classLoader());
+            } catch (Throwable t) {
+                failAddon(id, AddonException.Phase.ENABLE, "Unhandled exception during onEnable", t, true);
+                close(loaded.classLoader());
+            }
         }
     }
 
@@ -370,5 +500,27 @@ public class AddonManager {
             }
             states.putIfAbsent(id, AddonState.DISABLED);
         }
+    }
+
+    private String missingRequiredEnabledDependencies(AddonMetadata meta) {
+        List<String> missing = new ArrayList<>();
+
+        for (String depId : meta.requiredDependencies().keySet()) {
+            if (states.getOrDefault(depId, AddonState.DISABLED) != AddonState.ENABLED) {
+                Version min = meta.requiredDependencies().get(depId);
+                missing.add(depId + " >=" + min);
+            }
+        }
+
+        if (missing.isEmpty()) {
+            return null;
+        }
+
+        return "Missing required dependency " + String.join(", ", missing);
+    }
+
+    private static boolean shouldLogStacktrace(Throwable t) {
+        if (t == null) return false;
+        return !(t instanceof IllegalArgumentException) && !(t instanceof IOException);
     }
 }

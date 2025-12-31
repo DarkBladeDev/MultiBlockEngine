@@ -22,14 +22,18 @@ public class SimpleAddonContext implements AddonContext {
     private final MultiblockAPI api;
     private final Logger logger;
     private final Path dataFolder;
+    private final AddonManager addonManager;
+    private final AddonServiceRegistry services;
 
-    public SimpleAddonContext(String addonId, MultiBlockEngine plugin, MultiblockAPI api, Logger logger, Path dataFolder) {
+    public SimpleAddonContext(String addonId, MultiBlockEngine plugin, MultiblockAPI api, Logger logger, Path dataFolder, AddonManager addonManager, AddonServiceRegistry services) {
         this.addonId = addonId;
         this.addonNamespace = namespaceOf(addonId);
         this.plugin = plugin;
         this.api = api;
         this.logger = logger;
         this.dataFolder = dataFolder;
+        this.addonManager = addonManager;
+        this.services = services;
     }
 
     @Override
@@ -60,6 +64,16 @@ public class SimpleAddonContext implements AddonContext {
     @Override
     public Path getDataFolder() {
         return dataFolder;
+    }
+
+    @Override
+    public <T> void registerService(Class<T> serviceType, T service) {
+        services.register(addonId, serviceType, service);
+    }
+
+    @Override
+    public <T> T getService(Class<T> serviceType) {
+        return services.resolveIfEnabled(serviceType, addonManager::getState).orElse(null);
     }
 
     @Override
