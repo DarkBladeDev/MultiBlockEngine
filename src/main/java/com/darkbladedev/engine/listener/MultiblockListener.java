@@ -12,8 +12,9 @@ import com.darkbladedev.engine.manager.MultiblockManager;
 import com.darkbladedev.engine.model.MultiblockInstance;
 import com.darkbladedev.engine.model.MultiblockType;
 
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -70,7 +71,6 @@ public class MultiblockListener implements Listener {
         }
     }
 
-    @SuppressWarnings("deprecation")
     private void checkController(Block block, Player player) {
         // Optimization: In a real plugin, we would have a map of Material -> List<MultiblockType>
         // to avoid iterating all types.
@@ -85,14 +85,16 @@ public class MultiblockListener implements Listener {
                 Optional<MultiblockInstance> instance = manager.tryCreate(block, type, player);
                 if (instance.isPresent()) {
                     if (player != null) {
-                        player.sendMessage(ChatColor.GREEN + "Structure formed: " + type.id());
+                        player.sendMessage(Component.textOfChildren(
+                                Component.text("Structure formed: ", NamedTextColor.GREEN),
+                                Component.text(type.id(), NamedTextColor.WHITE)
+                        ));
                     }
                 }
             }
         }
     }
 
-    @SuppressWarnings("deprecation")
     @EventHandler
     public void onBlockBreak(BlockBreakEvent event) {
         Block block = event.getBlock();
@@ -106,7 +108,10 @@ public class MultiblockListener implements Listener {
             }
             
             manager.destroyInstance(instance);
-            event.getPlayer().sendMessage(ChatColor.RED + "Structure destroyed: " + instance.type().id());
+            event.getPlayer().sendMessage(Component.textOfChildren(
+                    Component.text("Structure destroyed: ", NamedTextColor.RED),
+                    Component.text(instance.type().id(), NamedTextColor.WHITE)
+            ));
         }
     }
 

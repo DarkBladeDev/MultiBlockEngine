@@ -6,9 +6,8 @@ import com.darkbladedev.engine.api.logging.LogLevel;
 import com.darkbladedev.engine.api.logging.LogPhase;
 import com.darkbladedev.engine.api.logging.LogScope;
 import com.darkbladedev.engine.model.MultiblockInstance;
-import net.kyori.adventure.text.Component;
+import com.darkbladedev.engine.util.StringUtil;
 import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
@@ -42,11 +41,8 @@ public class HologramManager {
                 TextDisplay display = loc.getWorld().spawn(loc, TextDisplay.class);
                 
                 String rawText = instance.type().displayName().text();
-                // Parse legacy colors (&)
-                @SuppressWarnings("deprecation")
-                String coloredText = ChatColor.translateAlternateColorCodes('&', rawText);
-                
-                display.text(Component.text(coloredText));
+
+                display.text(StringUtil.legacyText(rawText));
                 display.setBillboard(Display.Billboard.CENTER);
                 display.setPersistent(false); // Don't save to disk, we manage it
                 

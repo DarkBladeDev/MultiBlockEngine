@@ -6,6 +6,9 @@ import com.darkbladedev.engine.addon.AddonManager;
 import com.darkbladedev.engine.api.logging.CoreLogger;
 import com.darkbladedev.engine.api.logging.LogLevel;
 import com.darkbladedev.engine.api.logging.LogPhase;
+import com.darkbladedev.engine.api.logging.LogScope;
+import com.darkbladedev.engine.api.storage.StorageExceptionHandler;
+import com.darkbladedev.engine.api.storage.StorageRegistry;
 import com.darkbladedev.engine.command.MultiblockCommand;
 import com.darkbladedev.engine.integration.MultiblockExpansion;
 import com.darkbladedev.engine.listener.MultiblockListener;
@@ -16,11 +19,13 @@ import com.darkbladedev.engine.parser.MultiblockParser;
 import com.darkbladedev.engine.logging.LoggingManager;
 import com.darkbladedev.engine.storage.SqlStorage;
 import com.darkbladedev.engine.storage.StorageManager;
+import com.darkbladedev.engine.storage.service.DefaultStorageRegistry;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
 import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 
 import com.darkbladedev.engine.debug.DebugManager;
 
@@ -65,6 +70,27 @@ public class MultiBlockEngine extends JavaPlugin {
 
         addonManager = new AddonManager(this, api, log);
         manager.setAddonManager(addonManager);
+
+        StorageExceptionHandler storageExceptionHandler = (storageService, error) -> {
+            if (error == null) {
+                return;
+            }
+
+            log.logInternal(
+                new LogScope.Core(),
+                LogPhase.RUNTIME,
+                LogLevel.ERROR,
+                "Storage service exception",
+                error,
+                new com.darkbladedev.engine.api.logging.LogKv[] {
+                    com.darkbladedev.engine.api.logging.LogKv.kv("storage", storageService == null ? "null" : storageService.toString()),
+                    com.darkbladedev.engine.api.logging.LogKv.kv("storageType", storageService == null ? "null" : storageService.getClass().getName())
+                },
+                Set.of("storage")
+            );
+        };
+
+        addonManager.registerCoreService(StorageRegistry.class, new DefaultStorageRegistry(log, storageExceptionHandler));
 
         addonManager.loadAddons();
         

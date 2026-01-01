@@ -4,9 +4,7 @@ import com.darkbladedev.engine.model.MultiblockInstance;
 import com.darkbladedev.engine.util.PlayerResolver;
 import com.darkbladedev.engine.util.StringUtil;
 import me.clip.placeholderapi.PlaceholderAPI;
-import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
 
 import java.util.Collection;
@@ -23,8 +21,7 @@ public record ActionBarAction(String message, Object target) implements Action {
             if (hasPapi) {
                 text = PlaceholderAPI.setPlaceholders(p, text);
             }
-            text = ChatColor.translateAlternateColorCodes('&', text);
-            p.sendActionBar(Component.text(text));
+            p.sendActionBar(StringUtil.legacyText(text));
         }
     }
 }

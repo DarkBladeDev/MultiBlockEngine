@@ -4,10 +4,8 @@ import com.darkbladedev.engine.model.MultiblockInstance;
 import com.darkbladedev.engine.util.PlayerResolver;
 import com.darkbladedev.engine.util.StringUtil;
 import me.clip.placeholderapi.PlaceholderAPI;
-import net.kyori.adventure.text.Component;
 import net.kyori.adventure.title.Title;
 import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
 
 import java.time.Duration;
@@ -39,11 +37,7 @@ public record TitleAction(String title, String subtitle, int fadeIn, int stay, i
                 finalSubtitle = PlaceholderAPI.setPlaceholders(p, finalSubtitle);
             }
             
-            // Legacy color support
-            finalTitle = ChatColor.translateAlternateColorCodes('&', finalTitle);
-            finalSubtitle = ChatColor.translateAlternateColorCodes('&', finalSubtitle);
-            
-            Title t = Title.title(Component.text(finalTitle), Component.text(finalSubtitle), times);
+            Title t = Title.title(StringUtil.legacyText(finalTitle), StringUtil.legacyText(finalSubtitle), times);
             p.showTitle(t);
         }
     }

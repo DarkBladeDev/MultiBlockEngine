@@ -15,6 +15,8 @@ import com.darkbladedev.engine.api.logging.LogScope;
 import org.bukkit.plugin.ServicePriority;
 
 import java.io.File;
+import java.io.BufferedInputStream;
+import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
@@ -25,6 +27,8 @@ import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -37,6 +41,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class AddonManager {
+
+    private static final String CORE_PROVIDER_ID = "mbe:core";
 
     public enum AddonState {
         DISCOVERED,
@@ -60,6 +66,27 @@ public class AddonManager {
     private record PendingExposure(Class<?> api, Object implementation, ServicePriority priority) {}
 
     private record ExposedService(Class<?> api, Object provider) {}
+
+    private record AddonAuditIndex(
+        String addonId,
+        String fileName,
+        String mainClass,
+        String rootPrefixInternal,
+        List<String> classEntries,
+        Set<String> apiClasses,
+        Set<String> embeddedCoreApiClasses,
+        Set<String> embeddedJars
+    ) {}
+
+    private record AddonAuditReport(
+        String addonId,
+        String fileName,
+        Set<String> sharedApis,
+        Set<String> implicitAddonRefs,
+        Set<String> embeddedJars,
+        List<String> violations,
+        boolean fatal
+    ) {}
 
     private final MultiBlockEngine plugin;
     private final MultiblockAPI api;
@@ -108,11 +135,18 @@ public class AddonManager {
 
         Map<String, List<DiscoveredAddon>> candidates = new HashMap<>();
 
+        Map<File, AddonAuditIndex> auditIndexesByFile = new HashMap<>();
+
         for (File file : files) {
             try {
                 AddonMetadata metadata = readMetadata(file);
                 if (metadata == null) {
                     continue;
+                }
+
+                AddonAuditIndex auditIndex = buildAuditIndex(file, metadata);
+                if (auditIndex != null) {
+                    auditIndexesByFile.put(file, auditIndex);
                 }
 
                 candidates.computeIfAbsent(metadata.id(), k -> new ArrayList<>()).add(new DiscoveredAddon(file, metadata));
@@ -124,6 +158,7 @@ public class AddonManager {
         discoveredAddons.clear();
         loadedAddons.clear();
         states.clear();
+        states.put(CORE_PROVIDER_ID, AddonState.ENABLED);
         enableOrder.clear();
         pendingExposures.clear();
         exposedServices.clear();
@@ -146,6 +181,31 @@ public class AddonManager {
             DiscoveredAddon discovered = list.get(0);
             discoveredAddons.put(id, discovered);
             states.put(id, AddonState.DISCOVERED);
+        }
+
+        Map<String, AddonAuditReport> auditReports = auditDiscoveredAddons(discoveredAddons, auditIndexesByFile);
+        for (AddonAuditReport report : auditReports.values()) {
+            if (!report.violations().isEmpty()) {
+                String violations = joinLimited(report.violations(), 10);
+                if (report.fatal()) {
+                    states.put(report.addonId(), AddonState.FAILED);
+                    core.error("Addon failed audit", LogKv.kv("id", report.addonId()), LogKv.kv("file", report.fileName()), LogKv.kv("violations", violations));
+                } else {
+                    core.warn("Addon audit warnings", LogKv.kv("id", report.addonId()), LogKv.kv("file", report.fileName()), LogKv.kv("violations", violations));
+                }
+            }
+
+            if (!report.sharedApis().isEmpty()) {
+                core.warn("Addon shared APIs detected", LogKv.kv("id", report.addonId()), LogKv.kv("shared", joinLimited(new ArrayList<>(report.sharedApis()), 30)), LogKv.kv("count", report.sharedApis().size()));
+            }
+
+            if (!report.implicitAddonRefs().isEmpty()) {
+                core.warn("Addon implicit cross-addon references detected", LogKv.kv("id", report.addonId()), LogKv.kv("refs", joinLimited(new ArrayList<>(report.implicitAddonRefs()), 30)), LogKv.kv("count", report.implicitAddonRefs().size()));
+            }
+
+            if (!report.embeddedJars().isEmpty()) {
+                core.warn("Addon embeds nested jar libraries", LogKv.kv("id", report.addonId()), LogKv.kv("jars", joinLimited(new ArrayList<>(report.embeddedJars()), 20)), LogKv.kv("count", report.embeddedJars().size()));
+            }
         }
 
         Map<String, AddonMetadata> metadataById = new HashMap<>();
@@ -196,6 +256,10 @@ public class AddonManager {
 
     public AddonState getState(String addonId) {
         return states.getOrDefault(addonId, AddonState.DISABLED);
+    }
+
+    public <T> void registerCoreService(Class<T> serviceType, T service) {
+        serviceRegistry.register(CORE_PROVIDER_ID, serviceType, service);
     }
 
     public <T> void queueServiceExposure(String addonId, Class<T> api, T implementation, ServicePriority priority) {
@@ -288,7 +352,7 @@ public class AddonManager {
         try {
             Class<?> clazz = loader.loadClass(metadata.mainClass());
             if (!MultiblockAddon.class.isAssignableFrom(clazz)) {
-                failAddon(addonId, AddonException.Phase.LOAD, "Main class does not implement MultiblockAddon: " + metadata.mainClass(), null, true);
+                failAddon(addonId, AddonException.Phase.LOAD, "Main class does not implement MultiblockAddon (possible shaded core-api / classloader conflict): " + metadata.mainClass(), null, true);
                 close(loader);
                 return;
             }
@@ -465,6 +529,239 @@ public class AddonManager {
 
             return new AddonMetadata(id, version, apiVersion, main, required, optional, dependsIds);
         }
+    }
+
+    private AddonAuditIndex buildAuditIndex(File file, AddonMetadata metadata) {
+        try (JarFile jar = new JarFile(file)) {
+            List<String> classEntries = new ArrayList<>();
+            Set<String> apiClasses = new LinkedHashSet<>();
+            Set<String> embeddedCoreApiClasses = new LinkedHashSet<>();
+            Set<String> embeddedJars = new LinkedHashSet<>();
+
+            String rootPrefixInternal = rootPrefixInternal(metadata.mainClass());
+
+            jar.stream().forEach(entry -> {
+                String name = entry.getName();
+                if (name.endsWith(".jar") && !name.startsWith("META-INF/")) {
+                    embeddedJars.add(name);
+                }
+                if (!name.endsWith(".class")) {
+                    return;
+                }
+                if (name.startsWith("META-INF/")) {
+                    return;
+                }
+
+                classEntries.add(name);
+                String fqcn = name.substring(0, name.length() - ".class".length()).replace('/', '.');
+
+                if (fqcn.contains(".api.")) {
+                    apiClasses.add(fqcn);
+                }
+
+                if (name.startsWith("com/darkbladedev/engine/api/") || name.startsWith("com/darkbladedev/engine/model/")) {
+                    embeddedCoreApiClasses.add(fqcn);
+                }
+            });
+
+            return new AddonAuditIndex(metadata.id(), file.getName(), metadata.mainClass(), rootPrefixInternal, List.copyOf(classEntries), Set.copyOf(apiClasses), Set.copyOf(embeddedCoreApiClasses), Set.copyOf(embeddedJars));
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private Map<String, AddonAuditReport> auditDiscoveredAddons(Map<String, DiscoveredAddon> discovered, Map<File, AddonAuditIndex> byFile) {
+        Map<String, AddonAuditIndex> indexes = new LinkedHashMap<>();
+        for (DiscoveredAddon d : discovered.values()) {
+            AddonAuditIndex idx = byFile.get(d.file());
+            if (idx != null) {
+                indexes.put(d.metadata().id(), idx);
+            }
+        }
+
+        Map<String, List<String>> apiOwners = new LinkedHashMap<>();
+        for (AddonAuditIndex idx : indexes.values()) {
+            for (String api : idx.apiClasses()) {
+                apiOwners.computeIfAbsent(api, k -> new ArrayList<>()).add(idx.addonId());
+            }
+        }
+
+        Map<String, Set<String>> sharedApisByAddon = new LinkedHashMap<>();
+        for (Map.Entry<String, List<String>> e : apiOwners.entrySet()) {
+            if (e.getValue().size() <= 1) continue;
+            for (String owner : e.getValue()) {
+                sharedApisByAddon.computeIfAbsent(owner, k -> new LinkedHashSet<>()).add(e.getKey());
+            }
+        }
+
+        Map<String, Set<String>> implicitRefsByAddon = new LinkedHashMap<>();
+        Map<String, String> rootPrefixByAddon = new LinkedHashMap<>();
+        for (AddonAuditIndex idx : indexes.values()) {
+            rootPrefixByAddon.put(idx.addonId(), idx.rootPrefixInternal());
+        }
+
+        for (AddonAuditIndex idx : indexes.values()) {
+            DiscoveredAddon discoveredAddon = discovered.get(idx.addonId());
+            if (discoveredAddon == null) continue;
+            Set<String> refs = scanCrossAddonReferences(discoveredAddon.file(), idx.classEntries(), rootPrefixByAddon, idx.addonId());
+            if (!refs.isEmpty()) {
+                implicitRefsByAddon.put(idx.addonId(), refs);
+            }
+        }
+
+        Map<String, AddonAuditReport> out = new LinkedHashMap<>();
+        for (AddonAuditIndex idx : indexes.values()) {
+            List<String> violations = new ArrayList<>();
+            boolean fatal = false;
+
+            if (!idx.embeddedCoreApiClasses().isEmpty()) {
+                violations.add("embeds core-api classes (shaded/relocated core-api)");
+                fatal = true;
+            }
+
+            if (!idx.embeddedJars().isEmpty()) {
+                violations.add("embeds nested jar libraries inside addon");
+                fatal = true;
+            }
+
+            if (!idx.apiClasses().isEmpty()) {
+                violations.add("defines *.api.* packages inside addon");
+                fatal = true;
+            }
+
+            Set<String> shared = sharedApisByAddon.getOrDefault(idx.addonId(), Set.of());
+            if (!shared.isEmpty()) {
+                violations.add("shared API definitions duplicated across addons");
+                fatal = true;
+            }
+
+            Set<String> implicitRefs = implicitRefsByAddon.getOrDefault(idx.addonId(), Set.of());
+            if (!implicitRefs.isEmpty()) {
+                violations.add("references classes from other addons");
+                fatal = true;
+            }
+
+            out.put(idx.addonId(), new AddonAuditReport(idx.addonId(), idx.fileName(), shared, implicitRefs, idx.embeddedJars(), List.copyOf(violations), fatal));
+        }
+
+        return out;
+    }
+
+    private Set<String> scanCrossAddonReferences(File addonJar, List<String> classEntries, Map<String, String> rootPrefixByAddon, String selfId) {
+        if (classEntries == null || classEntries.isEmpty()) {
+            return Set.of();
+        }
+        Map<String, String> otherPrefixes = new LinkedHashMap<>();
+        for (Map.Entry<String, String> e : rootPrefixByAddon.entrySet()) {
+            String addonId = e.getKey();
+            if (addonId.equals(selfId)) continue;
+            String prefix = e.getValue();
+            if (prefix == null || prefix.isBlank()) continue;
+            otherPrefixes.put(addonId, prefix);
+        }
+        if (otherPrefixes.isEmpty()) {
+            return Set.of();
+        }
+
+        Set<String> hits = new LinkedHashSet<>();
+        try (JarFile jar = new JarFile(addonJar)) {
+            for (String entryName : classEntries) {
+                JarEntry entry = jar.getJarEntry(entryName);
+                if (entry == null) continue;
+                try (InputStream in = jar.getInputStream(entry)) {
+                    Set<String> foundInClass = scanClassUtf8Constants(in, entryName, otherPrefixes);
+                    if (!foundInClass.isEmpty()) {
+                        hits.addAll(foundInClass);
+                        if (hits.size() >= 20) {
+                            return Set.copyOf(hits);
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            return Set.of();
+        }
+
+        return Set.copyOf(hits);
+    }
+
+    private Set<String> scanClassUtf8Constants(InputStream rawIn, String classEntryName, Map<String, String> otherPrefixes) throws IOException {
+        try (DataInputStream in = new DataInputStream(new BufferedInputStream(rawIn))) {
+            int magic = in.readInt();
+            if (magic != 0xCAFEBABE) {
+                return Set.of();
+            }
+            in.readUnsignedShort();
+            in.readUnsignedShort();
+            int cpCount = in.readUnsignedShort();
+
+            Set<String> hits = new LinkedHashSet<>();
+            String ownerClass = classEntryName == null ? "" : classEntryName.replace('/', '.');
+            if (ownerClass.endsWith(".class")) {
+                ownerClass = ownerClass.substring(0, ownerClass.length() - ".class".length());
+            }
+            for (int i = 1; i < cpCount; i++) {
+                int tag = in.readUnsignedByte();
+                switch (tag) {
+                    case 1 -> {
+                        String s = in.readUTF();
+                        for (Map.Entry<String, String> e : otherPrefixes.entrySet()) {
+                            String prefix = e.getValue();
+                            if (prefix == null || prefix.isBlank()) {
+                                continue;
+                            }
+
+                            if (s.contains(prefix)) {
+                                if (s.contains(prefix + "/api/") || s.contains(prefix + ".api.")) {
+                                    continue;
+                                }
+                                hits.add(e.getKey() + "::" + ownerClass);
+                            }
+                        }
+                    }
+                    case 3, 4 -> in.readInt();
+                    case 5, 6 -> {
+                        in.readLong();
+                        i++;
+                    }
+                    case 7, 8, 16 -> in.readUnsignedShort();
+                    case 9, 10, 11, 12, 18 -> {
+                        in.readUnsignedShort();
+                        in.readUnsignedShort();
+                    }
+                    case 15 -> {
+                        in.readUnsignedByte();
+                        in.readUnsignedShort();
+                    }
+                    default -> {
+                        return Set.of();
+                    }
+                }
+            }
+
+            return Set.copyOf(hits);
+        }
+    }
+
+    private static String rootPrefixInternal(String mainClass) {
+        if (mainClass == null) {
+            return "";
+        }
+        String pkg;
+        int idx = mainClass.lastIndexOf('.');
+        pkg = idx < 0 ? "" : mainClass.substring(0, idx);
+
+        String[] parts = pkg.split("\\.");
+        int take = Math.min(parts.length, 4);
+        if (take <= 0) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < take; i++) {
+            if (i > 0) sb.append('/');
+            sb.append(parts[i]);
+        }
+        return sb.toString();
     }
 
     private Map<String, Version> parseDependencyMap(String ownerId, String raw, String fileName) {

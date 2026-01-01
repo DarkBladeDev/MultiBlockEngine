@@ -5,13 +5,11 @@ import com.darkbladedev.engine.util.PlayerResolver;
 import com.darkbladedev.engine.util.StringUtil;
 import me.clip.placeholderapi.PlaceholderAPI;
 import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
 
 import java.util.Collection;
 
 public record SendMessageAction(String message, Object targetSelector) implements Action {
-    @SuppressWarnings("deprecation")
     @Override
     public void execute(MultiblockInstance instance, Player contextPlayer) {
         // Resolve targets using the utility
@@ -28,7 +26,7 @@ public record SendMessageAction(String message, Object targetSelector) implement
             if (hasPapi) {
                 processed = PlaceholderAPI.setPlaceholders(p, processed);
             }
-            p.sendMessage(ChatColor.translateAlternateColorCodes('&', processed));
+            p.sendMessage(StringUtil.legacyText(processed));
         }
     }
 }

@@ -1,6 +1,8 @@
 package com.darkbladedev.engine.util;
 
 import com.darkbladedev.engine.model.MultiblockInstance;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -8,6 +10,18 @@ import java.util.regex.Pattern;
 public class StringUtil {
 
     private static final Pattern VARIABLE_PATTERN = Pattern.compile("<variable:([a-zA-Z0-9_]+)>");
+    private static final LegacyComponentSerializer LEGACY_SECTION = LegacyComponentSerializer.legacySection();
+    private static final LegacyComponentSerializer LEGACY_AMP = LegacyComponentSerializer.legacyAmpersand();
+
+    public static Component legacyText(String text) {
+        if (text == null || text.isBlank()) {
+            return Component.empty();
+        }
+        if (text.indexOf('§') >= 0) {
+            return LEGACY_SECTION.deserialize(text);
+        }
+        return LEGACY_AMP.deserialize(text);
+    }
 
     public static String parsePlaceholders(String text, MultiblockInstance instance) {
         if (text == null || text.isEmpty()) return text;

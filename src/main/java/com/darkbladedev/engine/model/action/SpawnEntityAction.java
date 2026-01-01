@@ -1,6 +1,7 @@
 package com.darkbladedev.engine.model.action;
 
 import com.darkbladedev.engine.model.MultiblockInstance;
+import com.darkbladedev.engine.util.StringUtil;
 import org.bukkit.Location;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
@@ -14,7 +15,7 @@ public record SpawnEntityAction(EntityType type, Vector offset, String customNam
         if (loc.getWorld() != null) {
             Entity entity = loc.getWorld().spawnEntity(loc, type);
             if (customName != null) {
-                entity.setCustomName(customName);
+                entity.customName(StringUtil.legacyText(customName));
                 entity.setCustomNameVisible(true);
             }
         }
