@@ -8,6 +8,7 @@ import com.darkbladedev.engine.model.MultiblockType;
 import com.darkbladedev.engine.model.action.Action;
 import com.darkbladedev.engine.model.condition.Condition;
 import org.bukkit.event.Listener;
+import org.bukkit.plugin.ServicePriority;
 
 import java.nio.file.Path;
 import java.util.Map;
@@ -24,6 +25,12 @@ public interface AddonContext {
 
     <T> void registerService(Class<T> serviceType, T service);
     <T> T getService(Class<T> serviceType);
+
+    <T> void exposeService(Class<T> api, T implementation, ServicePriority priority);
+
+    default <T> void exposeService(Class<T> api, T implementation) {
+        exposeService(api, implementation, ServicePriority.Normal);
+    }
     
     void registerAction(String key, Function<Map<String, Object>, Action> factory);
     void registerCondition(String key, Function<Map<String, Object>, Condition> factory);

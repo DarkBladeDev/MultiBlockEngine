@@ -12,6 +12,7 @@ import com.darkbladedev.engine.api.logging.LogKv;
 import com.darkbladedev.engine.api.logging.LogLevel;
 import com.darkbladedev.engine.api.logging.LogPhase;
 import com.darkbladedev.engine.api.logging.LogScope;
+import org.bukkit.plugin.ServicePriority;
 
 import java.io.File;
 import java.io.IOException;
@@ -33,6 +34,7 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class AddonManager {
 
@@ -55,6 +57,10 @@ public class AddonManager {
         Path dataFolder
     ) {}
 
+    private record PendingExposure(Class<?> api, Object implementation, ServicePriority priority) {}
+
+    private record ExposedService(Class<?> api, Object provider) {}
+
     private final MultiBlockEngine plugin;
     private final MultiblockAPI api;
     private final CoreLogger log;
@@ -67,6 +73,8 @@ public class AddonManager {
     private final Map<String, AddonState> states = new HashMap<>();
     private final ArrayDeque<String> enableOrder = new ArrayDeque<>();
     private List<String> resolvedOrder = List.of();
+    private final Map<String, List<PendingExposure>> pendingExposures = new ConcurrentHashMap<>();
+    private final Map<String, List<ExposedService>> exposedServices = new ConcurrentHashMap<>();
 
     public AddonManager(MultiBlockEngine plugin, MultiblockAPI api, CoreLogger log) {
         this.plugin = plugin;
@@ -116,6 +124,8 @@ public class AddonManager {
         loadedAddons.clear();
         states.clear();
         enableOrder.clear();
+        pendingExposures.clear();
+        exposedServices.clear();
         resolvedOrder = List.of();
 
         for (Map.Entry<String, List<DiscoveredAddon>> entry : candidates.entrySet()) {
@@ -187,6 +197,25 @@ public class AddonManager {
         return states.getOrDefault(addonId, AddonState.DISABLED);
     }
 
+    public <T> void queueServiceExposure(String addonId, Class<T> api, T implementation, ServicePriority priority) {
+        Objects.requireNonNull(addonId, "addonId");
+        Objects.requireNonNull(api, "api");
+        Objects.requireNonNull(implementation, "implementation");
+        Objects.requireNonNull(priority, "priority");
+
+        pendingExposures.compute(addonId, (k, list) -> {
+            List<PendingExposure> next = list == null ? new ArrayList<>() : new ArrayList<>(list);
+            next.add(new PendingExposure(api, implementation, priority));
+            return List.copyOf(next);
+        });
+
+        log.logInternal(new LogScope.Addon(addonId, addonVersion(addonId)), LogPhase.SERVICE_REGISTER, LogLevel.DEBUG,
+            "Service exposure queued", null,
+            new LogKv[] { LogKv.kv("service", api.getName()), LogKv.kv("priority", priority.name()) },
+            Set.of()
+        );
+    }
+
     public void failAddon(String addonId, AddonException.Phase phase, String message, Throwable cause, boolean fatal) {
         if (addonId == null || addonId.isBlank()) {
             addonId = "unknown";
@@ -208,6 +237,7 @@ public class AddonManager {
         LoadedAddon loaded = loadedAddons.get(addonId);
         if (fatal && loaded != null) {
             try {
+                unexposeAddonServices(addonId);
                 loaded.phase().set(LogPhase.DISABLE);
                 loaded.addon().onDisable();
             } catch (Throwable t) {
@@ -489,26 +519,61 @@ public class AddonManager {
             try {
                 loaded.phase().set(LogPhase.ENABLE);
                 loaded.addon().onEnable();
+
+                List<PendingExposure> exposures = pendingExposures.getOrDefault(id, List.of());
+                boolean exposureFailed = false;
+                for (PendingExposure exposure : exposures) {
+                    try {
+                        Object provider = BukkitServiceBridge.exposeProviderRaw(plugin, exposure.api(), exposure.implementation(), exposure.priority());
+                        trackExposedService(id, exposure.api(), provider);
+                        log.logInternal(new LogScope.Addon(id, addonVersion(id)), LogPhase.SERVICE_REGISTER, LogLevel.INFO,
+                            "Public service exposed",
+                            null,
+                            new LogKv[] {
+                                LogKv.kv("service", exposure.api().getName()),
+                                LogKv.kv("priority", exposure.priority().name())
+                            },
+                            Set.of()
+                        );
+                    } catch (Throwable t) {
+                        failAddon(id, AddonException.Phase.ENABLE, "Failed to expose public service: " + exposure.api().getName(), t, true);
+                        exposureFailed = true;
+                        break;
+                    }
+                }
+
+                pendingExposures.remove(id);
+
+                if (exposureFailed) {
+                    unexposeAddonServices(id);
+                    close(loaded.classLoader());
+                    continue;
+                }
+
                 states.put(id, AddonState.ENABLED);
                 enableOrder.addLast(id);
                 loaded.logger().withPhase(LogPhase.ENABLE).info("Enabled");
             } catch (AddonException e) {
                 failAddon(id, AddonException.Phase.ENABLE, e.getMessage(), e.getCause(), e.isFatal());
+                unexposeAddonServices(id);
                 close(loaded.classLoader());
             } catch (Throwable t) {
                 failAddon(id, AddonException.Phase.ENABLE, "Unhandled exception during onEnable", t, true);
+                unexposeAddonServices(id);
                 close(loaded.classLoader());
             }
         }
     }
 
     public void disableAddons() {
+        pendingExposures.clear();
         while (!enableOrder.isEmpty()) {
             String id = enableOrder.removeLast();
             LoadedAddon loaded = loadedAddons.get(id);
             if (loaded == null) continue;
 
             try {
+                unexposeAddonServices(id);
                 loaded.phase().set(LogPhase.DISABLE);
                 loaded.addon().onDisable();
                 loaded.logger().withPhase(LogPhase.DISABLE).info("Disabled");
@@ -526,6 +591,40 @@ public class AddonManager {
                 close(loaded.classLoader());
             }
             states.putIfAbsent(id, AddonState.DISABLED);
+        }
+
+        exposedServices.clear();
+    }
+
+    private void trackExposedService(String addonId, Class<?> api, Object provider) {
+        Objects.requireNonNull(addonId, "addonId");
+        Objects.requireNonNull(api, "api");
+        Objects.requireNonNull(provider, "provider");
+
+        exposedServices.compute(addonId, (k, list) -> {
+            List<ExposedService> next = list == null ? new ArrayList<>() : new ArrayList<>(list);
+            next.add(new ExposedService(api, provider));
+            return List.copyOf(next);
+        });
+    }
+
+    private void unexposeAddonServices(String addonId) {
+        List<ExposedService> services = exposedServices.remove(addonId);
+        if (services == null || services.isEmpty()) {
+            return;
+        }
+
+        for (ExposedService svc : services) {
+            try {
+                BukkitServiceBridge.unexpose(svc.api(), svc.provider());
+            } catch (Throwable t) {
+                log.logInternal(new LogScope.Addon(addonId, addonVersion(addonId)), LogPhase.SERVICE_REGISTER, LogLevel.WARN,
+                    "Failed to unexpose public service",
+                    t,
+                    new LogKv[] { LogKv.kv("service", svc.api().getName()) },
+                    Set.of()
+                );
+            }
         }
     }
 

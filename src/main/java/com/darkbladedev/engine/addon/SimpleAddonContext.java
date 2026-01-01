@@ -10,6 +10,7 @@ import com.darkbladedev.engine.model.MultiblockType;
 import com.darkbladedev.engine.model.action.Action;
 import com.darkbladedev.engine.model.condition.Condition;
 import org.bukkit.event.Listener;
+import org.bukkit.plugin.ServicePriority;
 
 import java.nio.file.Path;
 import java.util.Map;
@@ -74,6 +75,11 @@ public class SimpleAddonContext implements AddonContext {
     @Override
     public <T> T getService(Class<T> serviceType) {
         return services.resolveIfEnabled(serviceType, addonManager::getState).orElse(null);
+    }
+
+    @Override
+    public <T> void exposeService(Class<T> api, T implementation, ServicePriority priority) {
+        addonManager.queueServiceExposure(addonId, api, implementation, priority);
     }
 
     @Override
