@@ -20,6 +20,14 @@ public interface Action {
         execute(instance);
     }
 
+    default boolean shouldExecuteOnInteract(org.bukkit.event.block.Action interactAction) {
+        if (interactAction == null) {
+            return false;
+        }
+        return interactAction == org.bukkit.event.block.Action.RIGHT_CLICK_BLOCK
+                || interactAction == org.bukkit.event.block.Action.RIGHT_CLICK_AIR;
+    }
+
     static Action owned(String ownerId, String typeKey, Action delegate) {
         return new Action() {
             @Override
@@ -40,6 +48,11 @@ public interface Action {
             @Override
             public void execute(MultiblockInstance instance) {
                 delegate.execute(instance);
+            }
+
+            @Override
+            public boolean shouldExecuteOnInteract(org.bukkit.event.block.Action interactAction) {
+                return delegate.shouldExecuteOnInteract(interactAction);
             }
         };
     }

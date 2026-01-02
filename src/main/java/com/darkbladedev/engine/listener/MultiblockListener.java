@@ -1,5 +1,6 @@
 package com.darkbladedev.engine.listener;
 
+import com.darkbladedev.engine.api.event.MultiblockBreakEvent;
 import com.darkbladedev.engine.api.event.MultiblockInteractEvent;
 import com.darkbladedev.engine.MultiBlockEngine;
 import com.darkbladedev.engine.api.addon.AddonException;
@@ -26,15 +27,23 @@ import org.bukkit.event.player.PlayerInteractEvent;
 
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import org.bukkit.inventory.EquipmentSlot;
+import org.bukkit.event.Event;
 
 public class MultiblockListener implements Listener {
 
     private final MultiblockManager manager;
+    private final Consumer<Event> eventCaller;
 
     public MultiblockListener(MultiblockManager manager) {
+        this(manager, Bukkit.getPluginManager()::callEvent);
+    }
+
+    public MultiblockListener(MultiblockManager manager, Consumer<Event> eventCaller) {
         this.manager = manager;
+        this.eventCaller = eventCaller;
     }
 
     @EventHandler
@@ -54,7 +63,7 @@ public class MultiblockListener implements Listener {
         if (instanceOpt.isPresent()) {
              MultiblockInstance instance = instanceOpt.get();
              MultiblockInteractEvent mbEvent = new MultiblockInteractEvent(instance, event.getPlayer(), event.getAction(), event.getClickedBlock());
-             Bukkit.getPluginManager().callEvent(mbEvent);
+             eventCaller.accept(mbEvent);
              if (mbEvent.isCancelled()) {
                  event.setCancelled(true);
                  return;
@@ -62,7 +71,9 @@ public class MultiblockListener implements Listener {
              
              // Execute Interact Actions
              for (com.darkbladedev.engine.model.action.Action action : instance.type().onInteractActions()) {
-                 executeActionSafely("INTERACT", action, instance, event.getPlayer());
+                 if (action != null && action.shouldExecuteOnInteract(event.getAction())) {
+                     executeActionSafely("INTERACT", action, instance, event.getPlayer());
+                 }
              }
         }
         
@@ -101,6 +112,13 @@ public class MultiblockListener implements Listener {
         Optional<MultiblockInstance> instanceOpt = manager.getInstanceAt(block.getLocation());
         if (instanceOpt.isPresent()) {
             MultiblockInstance instance = instanceOpt.get();
+
+            MultiblockBreakEvent mbEvent = new MultiblockBreakEvent(instance, event.getPlayer());
+            eventCaller.accept(mbEvent);
+            if (mbEvent.isCancelled()) {
+                event.setCancelled(true);
+                return;
+            }
             
             // Execute Break Actions
             for (com.darkbladedev.engine.model.action.Action action : instance.type().onBreakActions()) {

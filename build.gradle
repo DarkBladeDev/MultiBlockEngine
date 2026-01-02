@@ -27,6 +27,7 @@ repositories {
 
 dependencies {
     implementation project(":core-api")
+    implementation project(":item-bridge")
 
     compileOnly "io.papermc.paper:paper-api:1.20.4-R0.1-SNAPSHOT" // Using 1.20.4 as a modern baseline, adaptable to 1.21
     compileOnly 'me.clip:placeholderapi:2.11.5'
@@ -38,6 +39,7 @@ dependencies {
 
     testImplementation platform('org.junit:junit-bom:5.10.2')
     testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation "io.papermc.paper:paper-api:1.20.4-R0.1-SNAPSHOT"
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 

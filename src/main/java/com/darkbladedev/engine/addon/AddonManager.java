@@ -262,6 +262,10 @@ public class AddonManager {
         serviceRegistry.register(CORE_PROVIDER_ID, serviceType, service);
     }
 
+    public <T> T getCoreService(Class<T> serviceType) {
+        return serviceRegistry.resolveIfEnabled(CORE_PROVIDER_ID, serviceType, this::getState).orElse(null);
+    }
+
     public <T> void queueServiceExposure(String addonId, Class<T> api, T implementation, ServicePriority priority) {
         Objects.requireNonNull(addonId, "addonId");
         Objects.requireNonNull(api, "api");

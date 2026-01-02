@@ -3,6 +3,9 @@ package com.darkbladedev.engine.command;
 import com.darkbladedev.engine.MultiBlockEngine;
 import com.darkbladedev.engine.manager.MetricsManager;
 import com.darkbladedev.engine.manager.MultiblockManager;
+import com.darkbladedev.engine.command.services.ServicesCommandRouter;
+import com.darkbladedev.engine.command.services.impl.ItemsCommandService;
+import com.darkbladedev.engine.command.services.impl.UiCommandService;
 import com.darkbladedev.engine.model.MultiblockInstance;
 import com.darkbladedev.engine.model.MultiblockType;
 import com.darkbladedev.engine.model.PatternEntry;
@@ -29,34 +32,43 @@ import java.util.Optional;
 public class MultiblockCommand implements CommandExecutor, TabCompleter {
 
     private final MultiBlockEngine plugin;
+    private final ServicesCommandRouter services;
 
     public MultiblockCommand(MultiBlockEngine plugin) {
         this.plugin = plugin;
+        this.services = new ServicesCommandRouter(plugin);
+        this.services.registerInternal(new ItemsCommandService(plugin));
+        this.services.registerInternal(new UiCommandService());
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        String[] safeArgs = args == null ? new String[0] : args;
+        if (safeArgs.length > 0 && safeArgs[0].equalsIgnoreCase("services")) {
+            return services.handle(sender, label, safeArgs);
+        }
+
         if (!(sender instanceof Player player)) {
-            sender.sendMessage(Component.text("Only players can use this command.", NamedTextColor.RED));
+            sender.sendMessage(Component.text("Usage: /" + label + " <inspect|reload|status|debug|services>", NamedTextColor.YELLOW));
             return true;
         }
 
-        if (args.length == 0) {
+        if (safeArgs.length == 0) {
             player.sendMessage(Component.text("Usage: /mb <inspect|reload>", NamedTextColor.YELLOW));
             return true;
         }
 
-        if (args[0].equalsIgnoreCase("inspect")) {
+        if (safeArgs[0].equalsIgnoreCase("inspect")) {
             handleInspect(player);
             return true;
-        } else if (args[0].equalsIgnoreCase("status") || args[0].equalsIgnoreCase("stats")) {
+        } else if (safeArgs[0].equalsIgnoreCase("status") || safeArgs[0].equalsIgnoreCase("stats")) {
             handleStatus(player);
             return true;
-        } else if (args[0].equalsIgnoreCase("reload")) {
+        } else if (safeArgs[0].equalsIgnoreCase("reload")) {
             handleReload(player);
             return true;
-        } else if (args[0].equalsIgnoreCase("debug")) {
-            handleDebug(player, args);
+        } else if (safeArgs[0].equalsIgnoreCase("debug")) {
+            handleDebug(player, safeArgs);
             return true;
         }
 
@@ -235,6 +247,11 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        String[] safeArgs = args == null ? new String[0] : args;
+        if (safeArgs.length > 0 && safeArgs[0].equalsIgnoreCase("services")) {
+            return services.tabComplete(sender, safeArgs);
+        }
+
         if (args.length == 1) {
             List<String> subcommands = new ArrayList<>();
             subcommands.add("inspect");
@@ -242,6 +259,7 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
             subcommands.add("status");
             subcommands.add("stats");
             subcommands.add("debug");
+            subcommands.add("services");
             
             return filter(subcommands, args[0]);
         } else if (args.length == 2 && args[0].equalsIgnoreCase("debug")) {

@@ -7,6 +7,7 @@ import com.darkbladedev.engine.api.logging.CoreLogger;
 import com.darkbladedev.engine.api.logging.LogLevel;
 import com.darkbladedev.engine.api.logging.LogPhase;
 import com.darkbladedev.engine.api.logging.LogScope;
+import com.darkbladedev.engine.api.item.ItemService;
 import com.darkbladedev.engine.api.storage.StorageExceptionHandler;
 import com.darkbladedev.engine.api.storage.StorageRegistry;
 import com.darkbladedev.engine.command.MultiblockCommand;
@@ -17,6 +18,9 @@ import com.darkbladedev.engine.model.MultiblockInstance;
 import com.darkbladedev.engine.model.MultiblockType;
 import com.darkbladedev.engine.parser.MultiblockParser;
 import com.darkbladedev.engine.logging.LoggingManager;
+import com.darkbladedev.engine.item.bridge.ItemStackBridge;
+import com.darkbladedev.engine.item.bridge.PdcItemStackBridge;
+import com.darkbladedev.engine.item.DefaultItemService;
 import com.darkbladedev.engine.storage.SqlStorage;
 import com.darkbladedev.engine.storage.StorageManager;
 import com.darkbladedev.engine.storage.service.DefaultStorageRegistry;
@@ -90,6 +94,9 @@ public class MultiBlockEngine extends JavaPlugin {
             );
         };
 
+        DefaultItemService itemService = new DefaultItemService();
+        addonManager.registerCoreService(ItemService.class, itemService);
+        addonManager.registerCoreService(ItemStackBridge.class, new PdcItemStackBridge(itemService));
         addonManager.registerCoreService(StorageRegistry.class, new DefaultStorageRegistry(log, storageExceptionHandler));
 
         addonManager.loadAddons();
