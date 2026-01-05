@@ -3,6 +3,7 @@ package com.darkbladedev.engine.api.addon;
 import com.darkbladedev.engine.api.MultiblockAPI;
 import com.darkbladedev.engine.api.builder.MultiblockBuilder;
 import com.darkbladedev.engine.api.logging.AddonLogger;
+import com.darkbladedev.engine.api.wrench.WrenchInteractable;
 import com.darkbladedev.engine.model.BlockMatcher;
 import com.darkbladedev.engine.model.MultiblockType;
 import com.darkbladedev.engine.model.action.Action;
@@ -34,6 +35,7 @@ public interface AddonContext {
     
     void registerAction(String key, Function<Map<String, Object>, Action> factory);
     void registerCondition(String key, Function<Map<String, Object>, Condition> factory);
+    void registerWrenchAction(String key, WrenchInteractable interactable);
     void registerMatcher(String prefix, Function<String, BlockMatcher> factory);
     void registerListener(Listener listener);
     MultiblockBuilder createMultiblock(String id);

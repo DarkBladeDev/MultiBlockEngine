@@ -12,6 +12,7 @@ import com.darkbladedev.engine.api.logging.LogKv;
 import com.darkbladedev.engine.api.logging.LogLevel;
 import com.darkbladedev.engine.api.logging.LogPhase;
 import com.darkbladedev.engine.api.logging.LogScope;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.ServicePriority;
 
 import java.io.File;
@@ -21,7 +22,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Arrays;
@@ -95,6 +98,7 @@ public class AddonManager {
     private final AddonDataDirectorySystem dataDirectorySystem;
     private final AddonServiceRegistry serviceRegistry;
     private final AddonDependencyResolver dependencyResolver;
+    private final ConcurrentHashMap<String, AddonLoggingSettings> addonLogging = new ConcurrentHashMap<>();
     private final Map<String, DiscoveredAddon> discoveredAddons = new HashMap<>();
     private final Map<String, LoadedAddon> loadedAddons = new HashMap<>();
     private final Map<String, AddonState> states = new HashMap<>();
@@ -112,6 +116,26 @@ public class AddonManager {
         this.dataDirectorySystem = new AddonDataDirectorySystem(this.log, this.addonFolder.toPath());
         this.serviceRegistry = new AddonServiceRegistry(this.log);
         this.dependencyResolver = new AddonDependencyResolver();
+
+        this.log.setGate((scope, level) -> {
+            if (!(scope instanceof LogScope.Addon addon)) {
+                return true;
+            }
+            String id = addon.addonId();
+            String key = id == null ? "" : id.toLowerCase(java.util.Locale.ROOT);
+            AddonLoggingSettings settings = addonLogging.get(key);
+            if (settings == null || !settings.suppressNonCritical()) {
+                return true;
+            }
+            return level.ordinal() >= settings.minLevelWhenSuppressed().ordinal();
+        });
+    }
+
+    private record AddonLoggingSettings(boolean suppressNonCritical, LogLevel minLevelWhenSuppressed) {
+        private AddonLoggingSettings {
+            suppressNonCritical = suppressNonCritical;
+            minLevelWhenSuppressed = minLevelWhenSuppressed == null ? LogLevel.ERROR : minLevelWhenSuppressed;
+        }
     }
 
     public void loadAddons() {
@@ -266,6 +290,38 @@ public class AddonManager {
         return serviceRegistry.resolveIfEnabled(CORE_PROVIDER_ID, serviceType, this::getState).orElse(null);
     }
 
+    public record AddonRuntime(String id, ClassLoader classLoader, Path dataFolder) {
+        public AddonRuntime {
+            if (id == null || id.isBlank()) {
+                id = "unknown";
+            }
+            if (classLoader == null) {
+                classLoader = AddonManager.class.getClassLoader();
+            }
+            if (dataFolder == null) {
+                dataFolder = Path.of(".").toAbsolutePath().normalize();
+            }
+        }
+    }
+
+    public List<AddonRuntime> listLoadedAddons() {
+        try {
+            List<AddonRuntime> out = new ArrayList<>();
+            List<String> ids = new ArrayList<>(loadedAddons.keySet());
+            ids.sort(String::compareToIgnoreCase);
+            for (String id : ids) {
+                LoadedAddon loaded = loadedAddons.get(id);
+                if (loaded == null) {
+                    continue;
+                }
+                out.add(new AddonRuntime(id, loaded.classLoader(), loaded.dataFolder()));
+            }
+            return List.copyOf(out);
+        } catch (Throwable t) {
+            return List.of();
+        }
+    }
+
     public <T> void queueServiceExposure(String addonId, Class<T> api, T implementation, ServicePriority priority) {
         Objects.requireNonNull(addonId, "addonId");
         Objects.requireNonNull(api, "api");
@@ -414,6 +470,8 @@ public class AddonManager {
             return;
         }
 
+        ensureAddonConfigAndLogging(loader, addonId, dataFolder, addonLogger);
+
         SimpleAddonContext context = new SimpleAddonContext(addonId, plugin, api, addonLogger, dataFolder, this, serviceRegistry);
         try {
             phaseRef.set(LogPhase.LOAD);
@@ -431,6 +489,48 @@ public class AddonManager {
         loadedAddons.put(addonId, new LoadedAddon(metadata, addon, loader, addonLogger, phaseRef, dataFolder));
         states.put(addonId, AddonState.LOADED);
         addonLogger.withPhase(LogPhase.LOAD).info("Loaded", LogKv.kv("version", metadata.version().toString()));
+    }
+
+    private void ensureAddonConfigAndLogging(URLClassLoader loader, String addonId, Path dataFolder, AddonLogger addonLogger) {
+        String key = addonId == null ? "" : addonId.toLowerCase(java.util.Locale.ROOT);
+        try {
+            Path configPath = dataFolder.resolve("config.yml");
+            if (!Files.exists(configPath)) {
+                try (InputStream in = loader.getResourceAsStream("config.yml")) {
+                    if (in != null) {
+                        Files.copy(in, configPath, StandardCopyOption.REPLACE_EXISTING);
+                    }
+                }
+            }
+
+            if (Files.exists(configPath)) {
+                YamlConfiguration yaml = YamlConfiguration.loadConfiguration(configPath.toFile());
+                boolean suppressNonCritical = yaml.getBoolean("logging.suppressNonCritical", yaml.getBoolean("logging.suppress", false));
+                String minStr = yaml.getString("logging.minLevelWhenSuppressed", yaml.getString("logging.minLevel", "ERROR"));
+                LogLevel min = parseLevel(minStr, LogLevel.ERROR);
+                addonLogging.put(key, new AddonLoggingSettings(suppressNonCritical, min));
+            }
+        } catch (Throwable t) {
+            addonLogging.remove(key);
+            if (addonLogger != null) {
+                addonLogger.withPhase(LogPhase.LOAD).warn("Failed to load addon config.yml logging settings", LogKv.kv("addon", addonId));
+            }
+        }
+    }
+
+    private static LogLevel parseLevel(String raw, LogLevel fallback) {
+        if (raw == null) {
+            return fallback;
+        }
+        String t = raw.trim().toUpperCase(java.util.Locale.ROOT);
+        if (t.isEmpty()) {
+            return fallback;
+        }
+        try {
+            return LogLevel.valueOf(t);
+        } catch (IllegalArgumentException ignored) {
+            return fallback;
+        }
     }
 
     private AddonMetadata readMetadata(File file) throws IOException {

@@ -31,6 +31,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.IdentityHashMap;
+import java.util.Base64;
+import java.util.UUID;
 import java.lang.reflect.Type;
 
 public class SqlStorage implements StorageManager {
@@ -173,7 +176,35 @@ public class SqlStorage implements StorageManager {
                 ps.setInt(5, instance.anchorLocation().getBlockZ());
                 ps.setString(6, instance.facing().name());
                 ps.setString(7, instance.state().name());
-                ps.setString(8, gson.toJson(instance.getVariables()));
+
+                SanitizationStats stats = new SanitizationStats();
+                Map<String, Object> sanitized = sanitizeVariablesForJson(instance.getVariables(), stats);
+                if (stats.changedCount() > 0) {
+                    log(LogPhase.RUNTIME, LogLevel.WARN, "Sanitized multiblock variables before save", null,
+                            LogKv.kv("type", instance.type().id()),
+                            LogKv.kv("world", instance.anchorLocation().getWorld().getName()),
+                            LogKv.kv("x", instance.anchorLocation().getBlockX()),
+                            LogKv.kv("y", instance.anchorLocation().getBlockY()),
+                            LogKv.kv("z", instance.anchorLocation().getBlockZ()),
+                            LogKv.kv("changed", stats.changedCount())
+                    );
+                }
+
+                String json;
+                try {
+                    json = gson.toJson(sanitized);
+                } catch (RuntimeException ex) {
+                    json = "{}";
+                    log(LogPhase.RUNTIME, LogLevel.ERROR, "Failed to serialize multiblock variables", ex,
+                            LogKv.kv("type", instance.type().id()),
+                            LogKv.kv("world", instance.anchorLocation().getWorld().getName()),
+                            LogKv.kv("x", instance.anchorLocation().getBlockX()),
+                            LogKv.kv("y", instance.anchorLocation().getBlockY()),
+                            LogKv.kv("z", instance.anchorLocation().getBlockZ())
+                    );
+                }
+
+                ps.setString(8, json);
                 ps.executeUpdate();
             } catch (SQLException e) {
                 log(LogPhase.RUNTIME, LogLevel.ERROR, "Failed to save multiblock instance", e,
@@ -185,6 +216,119 @@ public class SqlStorage implements StorageManager {
                 );
             }
         });
+    }
+
+    private static final class SanitizationStats {
+        private final java.util.concurrent.atomic.AtomicInteger changed = new java.util.concurrent.atomic.AtomicInteger();
+
+        private void inc() {
+            changed.incrementAndGet();
+        }
+
+        private int changedCount() {
+            return changed.get();
+        }
+    }
+
+    private Map<String, Object> sanitizeVariablesForJson(Map<String, Object> input, SanitizationStats stats) {
+        if (input == null || input.isEmpty()) {
+            return Map.of();
+        }
+        IdentityHashMap<Object, Boolean> visiting = new IdentityHashMap<>();
+        Object out = sanitizeJsonValue(input, visiting, stats);
+        if (out instanceof Map<?, ?> map) {
+            Map<String, Object> cast = new HashMap<>();
+            for (Map.Entry<?, ?> e : map.entrySet()) {
+                if (e.getKey() instanceof String k) {
+                    cast.put(k, e.getValue());
+                }
+            }
+            return cast;
+        }
+        return Map.of();
+    }
+
+    private Object sanitizeJsonValue(Object value, IdentityHashMap<Object, Boolean> visiting, SanitizationStats stats) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof String || value instanceof Number || value instanceof Boolean) {
+            return value;
+        }
+        if (value instanceof Character c) {
+            stats.inc();
+            return c.toString();
+        }
+        if (value instanceof UUID uuid) {
+            stats.inc();
+            return uuid.toString();
+        }
+        if (value instanceof Class<?> cls) {
+            stats.inc();
+            return cls.getName();
+        }
+        if (value instanceof Enum<?> en) {
+            stats.inc();
+            return en.name();
+        }
+        if (value instanceof byte[] bytes) {
+            stats.inc();
+            return Base64.getEncoder().encodeToString(bytes);
+        }
+        if (value instanceof org.bukkit.inventory.ItemStack stack) {
+            stats.inc();
+            org.bukkit.inventory.ItemStack single = stack.clone();
+            if (single.getAmount() != 1) {
+                single.setAmount(1);
+            }
+            return sanitizeJsonValue(single.serialize(), visiting, stats);
+        }
+
+        if (visiting.put(value, Boolean.TRUE) != null) {
+            stats.inc();
+            return String.valueOf(value);
+        }
+        try {
+            if (value instanceof Map<?, ?> map) {
+                Map<String, Object> out = new HashMap<>();
+                for (Map.Entry<?, ?> e : map.entrySet()) {
+                    String key;
+                    if (e.getKey() instanceof String s) {
+                        key = s;
+                    } else {
+                        key = String.valueOf(e.getKey());
+                        stats.inc();
+                    }
+                    Object next = sanitizeJsonValue(e.getValue(), visiting, stats);
+                    out.put(key, next);
+                }
+                return out;
+            }
+            if (value instanceof Collection<?> coll) {
+                List<Object> out = new ArrayList<>(coll.size());
+                for (Object o : coll) {
+                    out.add(sanitizeJsonValue(o, visiting, stats));
+                }
+                return out;
+            }
+            if (value.getClass().isArray()) {
+                if (value instanceof Object[] arr) {
+                    List<Object> out = new ArrayList<>(arr.length);
+                    for (Object o : arr) {
+                        out.add(sanitizeJsonValue(o, visiting, stats));
+                    }
+                    stats.inc();
+                    return out;
+                }
+                stats.inc();
+                return String.valueOf(value);
+            }
+        } finally {
+            visiting.remove(value);
+        }
+
+        stats.inc();
+        return String.valueOf(value);
     }
 
     @Override

@@ -5,6 +5,8 @@ import com.darkbladedev.engine.api.MultiblockAPI;
 import com.darkbladedev.engine.api.addon.AddonContext;
 import com.darkbladedev.engine.api.builder.MultiblockBuilder;
 import com.darkbladedev.engine.api.logging.AddonLogger;
+import com.darkbladedev.engine.api.wrench.WrenchDispatcher;
+import com.darkbladedev.engine.api.wrench.WrenchInteractable;
 import com.darkbladedev.engine.model.BlockMatcher;
 import com.darkbladedev.engine.model.MultiblockType;
 import com.darkbladedev.engine.model.action.Action;
@@ -96,6 +98,20 @@ public class SimpleAddonContext implements AddonContext {
             throw new IllegalArgumentException("Condition key must start with addon namespace prefix: " + addonNamespace + ":");
         }
         api.registerCondition(key, config -> Condition.owned(addonId, key, factory.apply(config)));
+    }
+
+    @Override
+    public void registerWrenchAction(String key, WrenchInteractable interactable) {
+        if (!key.startsWith(addonNamespace + ":")) {
+            throw new IllegalArgumentException("Wrench action key must start with addon namespace prefix: " + addonNamespace + ":");
+        }
+
+        WrenchDispatcher dispatcher = getService(WrenchDispatcher.class);
+        if (dispatcher == null) {
+            throw new IllegalStateException("WrenchDispatcher service is not available");
+        }
+
+        dispatcher.registerAction(key, interactable);
     }
 
     @Override

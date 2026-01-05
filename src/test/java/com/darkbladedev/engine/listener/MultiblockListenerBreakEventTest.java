@@ -5,31 +5,49 @@ import com.darkbladedev.engine.manager.MultiblockManager;
 import com.darkbladedev.engine.model.DisplayNameConfig;
 import com.darkbladedev.engine.model.MultiblockInstance;
 import com.darkbladedev.engine.model.MultiblockType;
+
+import be.seeseemelk.mockbukkit.MockBukkit;
+import be.seeseemelk.mockbukkit.ServerMock;
+import be.seeseemelk.mockbukkit.WorldMock;
+import be.seeseemelk.mockbukkit.entity.PlayerMock;
+
 import org.bukkit.Location;
-import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
-import org.bukkit.entity.Player;
 import org.bukkit.event.Event;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.util.Vector;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 public class MultiblockListenerBreakEventTest {
 
+    private ServerMock server;
+    private WorldMock world;
+    private PlayerMock player;
+
+    @BeforeEach
+    void setUp() {
+        server = MockBukkit.mock();
+        world = server.addSimpleWorld("world");
+        player = server.addPlayer();
+    }
+
+    @AfterEach
+    void tearDown() {
+        MockBukkit.unmock();
+    }
+
     @Test
     void breakEventIsFiredAndInstanceDestroyedWhenNotCancelled() {
-        UUID worldId = UUID.randomUUID();
-        World world = worldProxy(worldId);
         Location loc = new Location(world, 10, 64, 10);
 
         MultiblockInstance instance = new MultiblockInstance(dummyType("storage:disk"), loc, BlockFace.NORTH);
@@ -39,8 +57,7 @@ public class MultiblockListenerBreakEventTest {
         Consumer<Event> caller = events::add;
         MultiblockListener listener = new MultiblockListener(manager, caller);
 
-        Block block = blockProxy(loc);
-        Player player = playerProxy();
+        Block block = world.getBlockAt(10, 64, 10);
         BlockBreakEvent breakEvent = new BlockBreakEvent(block, player);
 
         listener.onBlockBreak(breakEvent);
@@ -56,8 +73,6 @@ public class MultiblockListenerBreakEventTest {
 
     @Test
     void breakCancellationPreventsDestroy() {
-        UUID worldId = UUID.randomUUID();
-        World world = worldProxy(worldId);
         Location loc = new Location(world, 10, 64, 10);
 
         MultiblockInstance instance = new MultiblockInstance(dummyType("storage:disk"), loc, BlockFace.NORTH);
@@ -72,8 +87,7 @@ public class MultiblockListenerBreakEventTest {
         };
         MultiblockListener listener = new MultiblockListener(manager, caller);
 
-        Block block = blockProxy(loc);
-        Player player = playerProxy();
+        Block block = world.getBlockAt(10, 64, 10);
         BlockBreakEvent breakEvent = new BlockBreakEvent(block, player);
 
         listener.onBlockBreak(breakEvent);
@@ -105,81 +119,6 @@ public class MultiblockListenerBreakEventTest {
         );
     }
 
-    private static World worldProxy(UUID uid) {
-        return (World) Proxy.newProxyInstance(
-                World.class.getClassLoader(),
-                new Class<?>[]{World.class},
-                (proxy, method, args) -> {
-                    if (method.getName().equals("getUID") && method.getParameterCount() == 0) {
-                        return uid;
-                    }
-                    if (method.getReturnType().isPrimitive()) {
-                        if (method.getReturnType() == boolean.class) return false;
-                        if (method.getReturnType() == int.class) return 0;
-                        if (method.getReturnType() == long.class) return 0L;
-                        if (method.getReturnType() == float.class) return 0f;
-                        if (method.getReturnType() == double.class) return 0d;
-                        if (method.getReturnType() == short.class) return (short) 0;
-                        if (method.getReturnType() == byte.class) return (byte) 0;
-                        if (method.getReturnType() == char.class) return (char) 0;
-                    }
-                    return null;
-                }
-        );
-    }
-
-    private static Block blockProxy(Location location) {
-        return (Block) Proxy.newProxyInstance(
-                Block.class.getClassLoader(),
-                new Class<?>[]{Block.class},
-                (proxy, method, args) -> {
-                    if (method.getName().equals("getLocation") && method.getParameterCount() == 0) {
-                        return location;
-                    }
-                    if (method.getReturnType().isPrimitive()) {
-                        if (method.getReturnType() == boolean.class) return false;
-                        if (method.getReturnType() == int.class) return 0;
-                        if (method.getReturnType() == long.class) return 0L;
-                        if (method.getReturnType() == float.class) return 0f;
-                        if (method.getReturnType() == double.class) return 0d;
-                        if (method.getReturnType() == short.class) return (short) 0;
-                        if (method.getReturnType() == byte.class) return (byte) 0;
-                        if (method.getReturnType() == char.class) return (char) 0;
-                    }
-                    return null;
-                }
-        );
-    }
-
-    private static Player playerProxy() {
-        UUID uuid = UUID.randomUUID();
-        return (Player) Proxy.newProxyInstance(
-                Player.class.getClassLoader(),
-                new Class<?>[]{Player.class},
-                (proxy, method, args) -> {
-                    if (method.getName().equals("getUniqueId") && method.getParameterCount() == 0) {
-                        return uuid;
-                    }
-                    if (method.getReturnType() == String.class && method.getParameterCount() == 0) {
-                        if (method.getName().equals("getName")) {
-                            return "TestPlayer";
-                        }
-                    }
-                    if (method.getReturnType().isPrimitive()) {
-                        if (method.getReturnType() == boolean.class) return false;
-                        if (method.getReturnType() == int.class) return 0;
-                        if (method.getReturnType() == long.class) return 0L;
-                        if (method.getReturnType() == float.class) return 0f;
-                        if (method.getReturnType() == double.class) return 0d;
-                        if (method.getReturnType() == short.class) return (short) 0;
-                        if (method.getReturnType() == byte.class) return (byte) 0;
-                        if (method.getReturnType() == char.class) return (char) 0;
-                    }
-                    return null;
-                }
-        );
-    }
-
     private static final class TestManager extends MultiblockManager {
         private MultiblockInstance instance;
         private boolean destroyed;
@@ -200,4 +139,3 @@ public class MultiblockListenerBreakEventTest {
         }
     }
 }
-

@@ -5,6 +5,7 @@ import com.darkbladedev.engine.api.item.ItemInstance;
 import com.darkbladedev.engine.api.item.ItemKey;
 import com.darkbladedev.engine.api.item.ItemKeys;
 import com.darkbladedev.engine.api.item.ItemService;
+import com.darkbladedev.engine.util.StringUtil;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Material;
@@ -14,16 +15,37 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.lang.reflect.Type;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.List;
+import java.util.ArrayList;
 import java.util.Locale;
 import java.util.Map;
+import java.util.HashMap;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 
 public final class PdcItemStackBridge implements ItemStackBridge {
 
     private static final NamespacedKey KEY_ID = NamespacedKey.fromString("multiblockengine:mbe_item_id");
     private static final NamespacedKey KEY_VERSION = NamespacedKey.fromString("multiblockengine:mbe_item_version");
     private static final NamespacedKey KEY_UID = NamespacedKey.fromString("multiblockengine:mbe_item_uid");
+    private static final NamespacedKey KEY_DATA = NamespacedKey.fromString("multiblockengine:mbe_item_data");
+
+    private static final String DATA_UID_KEY = "_uid";
+    private static final Gson GSON = new Gson();
+    private static final Type MAP_TYPE = new TypeToken<Map<String, Object>>() {}.getType();
 
     private final ItemService items;
 
@@ -47,6 +69,15 @@ public final class PdcItemStackBridge implements ItemStackBridge {
                 meta.displayName(Component.text(name, NamedTextColor.WHITE));
             }
 
+            Map<String, Object> props = def.properties();
+            if (props != null) {
+                Object loreRaw = props.get("lore");
+                List<Component> lore = parseLore(loreRaw);
+                if (!lore.isEmpty()) {
+                    meta.lore(lore);
+                }
+            }
+
             PersistentDataContainer pdc = meta.getPersistentDataContainer();
             if (KEY_ID != null) {
                 pdc.set(KEY_ID, PersistentDataType.STRING, key.id().toString());
@@ -55,14 +86,68 @@ public final class PdcItemStackBridge implements ItemStackBridge {
                 pdc.set(KEY_VERSION, PersistentDataType.INTEGER, Math.max(0, key.version()));
             }
 
-            Map<String, Object> props = def.properties();
+            props = def.properties();
+            Map<String, Object> data = instance.data();
+            if (data == null) {
+                data = Map.of();
+            }
             if (KEY_UID != null && props != null && Boolean.TRUE.equals(props.get("unstackable"))) {
-                pdc.set(KEY_UID, PersistentDataType.STRING, UUID.randomUUID().toString());
+                Object existing = data.get(DATA_UID_KEY);
+                String uid = existing instanceof String s && !s.isBlank() ? s : null;
+                if (uid == null) {
+                    uid = UUID.randomUUID().toString();
+                    if (instance.data() != null) {
+                        instance.data().put(DATA_UID_KEY, uid);
+                    }
+                }
+                pdc.set(KEY_UID, PersistentDataType.STRING, uid);
+            }
+
+            if (KEY_DATA != null && !data.isEmpty()) {
+                try {
+                    byte[] encoded = encodeData(data);
+                    if (encoded.length > 0) {
+                        pdc.set(KEY_DATA, PersistentDataType.BYTE_ARRAY, encoded);
+                    } else {
+                        pdc.remove(KEY_DATA);
+                    }
+                } catch (RuntimeException ex) {
+                    pdc.remove(KEY_DATA);
+                }
+            } else if (KEY_DATA != null) {
+                pdc.remove(KEY_DATA);
             }
             stack.setItemMeta(meta);
         }
 
         return stack;
+    }
+
+    private static List<Component> parseLore(Object raw) {
+        if (raw == null) {
+            return List.of();
+        }
+        if (raw instanceof String s) {
+            if (s.isBlank()) {
+                return List.of();
+            }
+            return List.of(StringUtil.legacyText(s));
+        }
+        if (raw instanceof List<?> list) {
+            List<Component> out = new ArrayList<>();
+            for (Object o : list) {
+                if (o == null) {
+                    continue;
+                }
+                String s = String.valueOf(o);
+                if (s.isBlank()) {
+                    continue;
+                }
+                out.add(StringUtil.legacyText(s));
+            }
+            return out;
+        }
+        return List.of();
     }
 
     @Override
@@ -97,7 +182,64 @@ public final class PdcItemStackBridge implements ItemStackBridge {
             return null;
         }
 
-        return items.factory().create(key);
+        Map<String, Object> data = new HashMap<>();
+        if (KEY_DATA != null) {
+            byte[] raw = pdc.get(KEY_DATA, PersistentDataType.BYTE_ARRAY);
+            if (raw != null && raw.length > 0) {
+                try {
+                    Map<String, Object> decoded = decodeData(raw);
+                    if (decoded != null && !decoded.isEmpty()) {
+                        data.putAll(decoded);
+                    }
+                } catch (RuntimeException ignored) {
+                }
+            }
+        }
+
+        if (KEY_UID != null) {
+            String uid = pdc.get(KEY_UID, PersistentDataType.STRING);
+            if (uid != null && !uid.isBlank()) {
+                data.put(DATA_UID_KEY, uid);
+            }
+        }
+
+        return items.factory().create(key, data);
+    }
+
+    private static byte[] encodeData(Map<String, Object> data) {
+        if (data == null || data.isEmpty()) {
+            return new byte[0];
+        }
+        String json = GSON.toJson(data);
+        if (json == null || json.isBlank()) {
+            return new byte[0];
+        }
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            try (GZIPOutputStream gzip = new GZIPOutputStream(out);
+                 OutputStreamWriter w = new OutputStreamWriter(gzip, StandardCharsets.UTF_8)) {
+                w.write(json);
+            }
+            return out.toByteArray();
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static Map<String, Object> decodeData(byte[] raw) {
+        if (raw == null || raw.length == 0) {
+            return Map.of();
+        }
+        try {
+            ByteArrayInputStream in = new ByteArrayInputStream(raw);
+            try (GZIPInputStream gzip = new GZIPInputStream(in);
+                 InputStreamReader r = new InputStreamReader(gzip, StandardCharsets.UTF_8)) {
+                Map<String, Object> map = GSON.fromJson(r, MAP_TYPE);
+                return map == null ? Map.of() : map;
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private static Material resolveMaterial(ItemDefinition def) {

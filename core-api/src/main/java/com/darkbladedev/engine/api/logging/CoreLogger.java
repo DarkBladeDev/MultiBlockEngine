@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiPredicate;
 
 public final class CoreLogger implements EngineLogger {
 
@@ -14,11 +15,16 @@ public final class CoreLogger implements EngineLogger {
     private final LogBackend backend;
     private final LoggingConfig config;
     private final AtomicReference<LogPhase> corePhase = new AtomicReference<>(LogPhase.BOOT);
+    private final AtomicReference<BiPredicate<LogScope, LogLevel>> gate = new AtomicReference<>(null);
 
     public CoreLogger(String engine, LogBackend backend, LoggingConfig config) {
         this.engine = Objects.requireNonNull(engine, "engine");
         this.backend = Objects.requireNonNull(backend, "backend");
         this.config = Objects.requireNonNull(config, "config");
+    }
+
+    public void setGate(BiPredicate<LogScope, LogLevel> gate) {
+        this.gate.set(gate);
     }
 
     public void setCorePhase(LogPhase phase) {
@@ -38,6 +44,13 @@ public final class CoreLogger implements EngineLogger {
         Objects.requireNonNull(scope, "scope");
         Objects.requireNonNull(phase, "phase");
         Objects.requireNonNull(level, "level");
+
+        if (level.ordinal() < LogLevel.ERROR.ordinal()) {
+            BiPredicate<LogScope, LogLevel> g = gate.get();
+            if (g != null && !g.test(scope, level)) {
+                return;
+            }
+        }
 
         if (!config.isEnabled(scope, level)) {
             return;
@@ -70,4 +83,3 @@ public final class CoreLogger implements EngineLogger {
         ));
     }
 }
-

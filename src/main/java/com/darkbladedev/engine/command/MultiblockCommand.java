@@ -6,6 +6,8 @@ import com.darkbladedev.engine.manager.MultiblockManager;
 import com.darkbladedev.engine.command.services.ServicesCommandRouter;
 import com.darkbladedev.engine.command.services.impl.ItemsCommandService;
 import com.darkbladedev.engine.command.services.impl.UiCommandService;
+import com.darkbladedev.engine.api.i18n.I18nService;
+import com.darkbladedev.engine.api.i18n.MessageKey;
 import com.darkbladedev.engine.model.MultiblockInstance;
 import com.darkbladedev.engine.model.MultiblockType;
 import com.darkbladedev.engine.model.PatternEntry;
@@ -31,6 +33,33 @@ import java.util.Optional;
 
 public class MultiblockCommand implements CommandExecutor, TabCompleter {
 
+    private static final String ORIGIN = "mbe";
+
+    private static final MessageKey MSG_USAGE_CONSOLE = MessageKey.of(ORIGIN, "commands.usage.console");
+    private static final MessageKey MSG_USAGE_PLAYER = MessageKey.of(ORIGIN, "commands.usage.player");
+    private static final MessageKey MSG_UNKNOWN_SUBCOMMAND = MessageKey.of(ORIGIN, "commands.error.unknown_subcommand");
+    private static final MessageKey MSG_DEBUG_USAGE = MessageKey.of(ORIGIN, "commands.debug.usage");
+    private static final MessageKey MSG_DEBUG_TYPE_NOT_FOUND = MessageKey.of(ORIGIN, "commands.debug.type_not_found");
+    private static final MessageKey MSG_DEBUG_PLAYER_NOT_FOUND = MessageKey.of(ORIGIN, "commands.debug.player_not_found");
+    private static final MessageKey MSG_DEBUG_MUST_LOOK_AT_BLOCK = MessageKey.of(ORIGIN, "commands.debug.must_look_at_block");
+    private static final MessageKey MSG_RELOAD_START = MessageKey.of(ORIGIN, "commands.reload.start");
+    private static final MessageKey MSG_RELOAD_DONE_TYPES = MessageKey.of(ORIGIN, "commands.reload.done_types");
+    private static final MessageKey MSG_RELOAD_DONE_RESTART = MessageKey.of(ORIGIN, "commands.reload.done_restart");
+    private static final MessageKey MSG_STATUS_TITLE = MessageKey.of(ORIGIN, "commands.status.title");
+    private static final MessageKey MSG_STATUS_LOADED_TYPES = MessageKey.of(ORIGIN, "commands.status.loaded_types");
+    private static final MessageKey MSG_STATUS_TOTAL_CREATED = MessageKey.of(ORIGIN, "commands.status.total_created");
+    private static final MessageKey MSG_STATUS_TOTAL_DESTROYED = MessageKey.of(ORIGIN, "commands.status.total_destroyed");
+    private static final MessageKey MSG_STATUS_STRUCTURE_CHECKS = MessageKey.of(ORIGIN, "commands.status.structure_checks");
+    private static final MessageKey MSG_STATUS_AVG_TICK = MessageKey.of(ORIGIN, "commands.status.avg_tick");
+    private static final MessageKey MSG_INSPECT_MUST_LOOK_AT_BLOCK = MessageKey.of(ORIGIN, "commands.inspect.must_look_at_block");
+    private static final MessageKey MSG_INSPECT_NONE = MessageKey.of(ORIGIN, "commands.inspect.none_here");
+    private static final MessageKey MSG_INSPECT_TITLE = MessageKey.of(ORIGIN, "commands.inspect.title");
+    private static final MessageKey MSG_INSPECT_TYPE = MessageKey.of(ORIGIN, "commands.inspect.type");
+    private static final MessageKey MSG_INSPECT_STATE = MessageKey.of(ORIGIN, "commands.inspect.state");
+    private static final MessageKey MSG_INSPECT_FACING = MessageKey.of(ORIGIN, "commands.inspect.facing");
+    private static final MessageKey MSG_INSPECT_ANCHOR = MessageKey.of(ORIGIN, "commands.inspect.anchor");
+    private static final MessageKey MSG_INSPECT_HIGHLIGHTED = MessageKey.of(ORIGIN, "commands.inspect.highlighted");
+
     private final MultiBlockEngine plugin;
     private final ServicesCommandRouter services;
 
@@ -49,12 +78,12 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
         }
 
         if (!(sender instanceof Player player)) {
-            sender.sendMessage(Component.text("Usage: /" + label + " <inspect|reload|status|debug|services>", NamedTextColor.YELLOW));
+            sender.sendMessage(Component.text(tr(sender, MSG_USAGE_CONSOLE, "label", label), NamedTextColor.YELLOW));
             return true;
         }
 
         if (safeArgs.length == 0) {
-            player.sendMessage(Component.text("Usage: /mb <inspect|reload>", NamedTextColor.YELLOW));
+            player.sendMessage(Component.text(tr(player, MSG_USAGE_PLAYER, "label", label), NamedTextColor.YELLOW));
             return true;
         }
 
@@ -72,13 +101,13 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        player.sendMessage(Component.text("Unknown subcommand.", NamedTextColor.RED));
+        player.sendMessage(Component.text(tr(player, MSG_UNKNOWN_SUBCOMMAND), NamedTextColor.RED));
         return true;
     }
 
     private void handleDebug(Player player, String[] args) {
         if (args.length < 2) {
-            player.sendMessage(Component.text("Usage: /mb debug <id> [player]", NamedTextColor.RED));
+            player.sendMessage(Component.text(tr(player, MSG_DEBUG_USAGE), NamedTextColor.RED));
             return;
         }
         
@@ -86,7 +115,7 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
         Optional<MultiblockType> typeOpt = plugin.getManager().getType(id);
         
         if (typeOpt.isEmpty()) {
-            player.sendMessage(Component.text("Multiblock type not found: " + id, NamedTextColor.RED));
+            player.sendMessage(Component.text(tr(player, MSG_DEBUG_TYPE_NOT_FOUND, "id", id), NamedTextColor.RED));
             return;
         }
         MultiblockType type = typeOpt.get();
@@ -96,7 +125,7 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
         if (args.length >= 3) {
             targetPlayer = org.bukkit.Bukkit.getPlayer(args[2]);
             if (targetPlayer == null) {
-                player.sendMessage(Component.text("Player not found: " + args[2], NamedTextColor.RED));
+                player.sendMessage(Component.text(tr(player, MSG_DEBUG_PLAYER_NOT_FOUND, "player", args[2]), NamedTextColor.RED));
                 return;
             }
         }
@@ -104,7 +133,7 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
         // Raytrace for anchor
         Block targetBlock = targetPlayer.getTargetBlockExact(10);
         if (targetBlock == null || targetBlock.getType().isAir()) {
-            player.sendMessage(Component.text("You must look at a block to use as the controller anchor.", NamedTextColor.RED));
+            player.sendMessage(Component.text(tr(player, MSG_DEBUG_MUST_LOOK_AT_BLOCK), NamedTextColor.RED));
             return;
         }
         
@@ -113,10 +142,15 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
     }
 
     private void handleReload(Player player) {
-        player.sendMessage(Component.text("Reloading MultiBlockEngine...", NamedTextColor.YELLOW));
+        player.sendMessage(Component.text(tr(player, MSG_RELOAD_START), NamedTextColor.YELLOW));
         
         // Reload Config
         plugin.reloadConfig();
+
+        I18nService i18n = plugin.getAddonManager().getCoreService(I18nService.class);
+        if (i18n != null) {
+            i18n.reload();
+        }
         
         // Reload Types
         File multiblockDir = new File(plugin.getDataFolder(), "multiblocks");
@@ -132,33 +166,33 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
         // Restart ticking with new config
         plugin.getManager().startTicking(plugin);
         
-        player.sendMessage(Component.text("Reloaded " + newTypes.size() + " multiblock types.", NamedTextColor.GREEN));
-        player.sendMessage(Component.text("Metrics and Ticking restarted.", NamedTextColor.GREEN));
+        player.sendMessage(Component.text(tr(player, MSG_RELOAD_DONE_TYPES, "count", newTypes.size()), NamedTextColor.GREEN));
+        player.sendMessage(Component.text(tr(player, MSG_RELOAD_DONE_RESTART), NamedTextColor.GREEN));
     }
     
     private void handleStatus(Player player) {
         MultiblockManager manager = plugin.getManager();
         MetricsManager metrics = manager.getMetrics();
         
-        player.sendMessage(Component.text("=== MultiBlockEngine Status ===", NamedTextColor.BLUE));
+        player.sendMessage(Component.text(tr(player, MSG_STATUS_TITLE), NamedTextColor.BLUE));
         player.sendMessage(Component.textOfChildren(
-                Component.text("Loaded Types: ", NamedTextColor.GRAY),
+                Component.text(tr(player, MSG_STATUS_LOADED_TYPES), NamedTextColor.GRAY),
                 Component.text(String.valueOf(manager.getTypes().size()), NamedTextColor.WHITE)
         ));
         player.sendMessage(Component.textOfChildren(
-                Component.text("Total Created: ", NamedTextColor.GRAY),
+                Component.text(tr(player, MSG_STATUS_TOTAL_CREATED), NamedTextColor.GRAY),
                 Component.text(String.valueOf(metrics.getCreatedInstances()), NamedTextColor.WHITE)
         ));
         player.sendMessage(Component.textOfChildren(
-                Component.text("Total Destroyed: ", NamedTextColor.GRAY),
+                Component.text(tr(player, MSG_STATUS_TOTAL_DESTROYED), NamedTextColor.GRAY),
                 Component.text(String.valueOf(metrics.getDestroyedInstances()), NamedTextColor.WHITE)
         ));
         player.sendMessage(Component.textOfChildren(
-                Component.text("Structure Checks: ", NamedTextColor.GRAY),
+                Component.text(tr(player, MSG_STATUS_STRUCTURE_CHECKS), NamedTextColor.GRAY),
                 Component.text(String.valueOf(metrics.getStructureChecks()), NamedTextColor.WHITE)
         ));
         player.sendMessage(Component.textOfChildren(
-                Component.text("Avg Tick Time: ", NamedTextColor.GRAY),
+                Component.text(tr(player, MSG_STATUS_AVG_TICK), NamedTextColor.GRAY),
                 Component.text(String.format("%.4f ms", metrics.getAverageTickTimeMs()), NamedTextColor.WHITE)
         ));
     }
@@ -166,7 +200,7 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
     private void handleInspect(Player player) {
         Block target = player.getTargetBlockExact(5);
         if (target == null) {
-            player.sendMessage(Component.text("You must look at a block.", NamedTextColor.RED));
+            player.sendMessage(Component.text(tr(player, MSG_INSPECT_MUST_LOOK_AT_BLOCK), NamedTextColor.RED));
             return;
         }
 
@@ -174,26 +208,26 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
         Optional<MultiblockInstance> instanceOpt = manager.getInstanceAt(target.getLocation());
 
         if (instanceOpt.isEmpty()) {
-            player.sendMessage(Component.text("No multiblock structure found at this block.", NamedTextColor.YELLOW));
+            player.sendMessage(Component.text(tr(player, MSG_INSPECT_NONE), NamedTextColor.YELLOW));
             return;
         }
 
         MultiblockInstance instance = instanceOpt.get();
-        player.sendMessage(Component.text("=== Multiblock Info ===", NamedTextColor.GREEN));
+        player.sendMessage(Component.text(tr(player, MSG_INSPECT_TITLE), NamedTextColor.GREEN));
         player.sendMessage(Component.textOfChildren(
-                Component.text("Type: ", NamedTextColor.GOLD),
+                Component.text(tr(player, MSG_INSPECT_TYPE), NamedTextColor.GOLD),
                 Component.text(instance.type().id(), NamedTextColor.WHITE)
         ));
         player.sendMessage(Component.textOfChildren(
-                Component.text("State: ", NamedTextColor.GOLD),
+                Component.text(tr(player, MSG_INSPECT_STATE), NamedTextColor.GOLD),
                 Component.text(String.valueOf(instance.state()), NamedTextColor.WHITE)
         ));
         player.sendMessage(Component.textOfChildren(
-                Component.text("Facing: ", NamedTextColor.GOLD),
+                Component.text(tr(player, MSG_INSPECT_FACING), NamedTextColor.GOLD),
                 Component.text(String.valueOf(instance.facing()), NamedTextColor.WHITE)
         ));
         player.sendMessage(Component.textOfChildren(
-                Component.text("Anchor: ", NamedTextColor.GOLD),
+                Component.text(tr(player, MSG_INSPECT_ANCHOR), NamedTextColor.GOLD),
                 Component.text(formatLoc(instance.anchorLocation()), NamedTextColor.WHITE)
         ));
         
@@ -223,7 +257,15 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
         // Highlight anchor specifically
         player.spawnParticle(Particle.FLAME, anchor.clone().add(0.5, 0.5, 0.5), 10, 0.1, 0.1, 0.1, 0.05);
         
-        player.sendMessage(Component.text("Structure highlighted.", NamedTextColor.AQUA));
+        player.sendMessage(Component.text(tr(player, MSG_INSPECT_HIGHLIGHTED), NamedTextColor.AQUA));
+    }
+
+    private String tr(CommandSender sender, MessageKey key, Object... params) {
+        I18nService i18n = plugin.getAddonManager().getCoreService(I18nService.class);
+        if (i18n == null) {
+            return key == null ? "" : key.fullKey();
+        }
+        return i18n.tr(sender, key, params);
     }
 
     private String formatLoc(Location loc) {

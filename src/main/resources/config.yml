@@ -13,6 +13,9 @@ logging:
   debugAddons: false
   debugAddonsById: []
 
+i18n:
+  debugMissingKeys: false
+
 # Database configuration (for future use if we switch from internal SQLite)
 database:
   type: sqlite

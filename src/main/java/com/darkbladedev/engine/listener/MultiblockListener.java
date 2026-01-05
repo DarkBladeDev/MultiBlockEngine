@@ -1,7 +1,6 @@
 package com.darkbladedev.engine.listener;
 
 import com.darkbladedev.engine.api.event.MultiblockBreakEvent;
-import com.darkbladedev.engine.api.event.MultiblockInteractEvent;
 import com.darkbladedev.engine.MultiBlockEngine;
 import com.darkbladedev.engine.api.addon.AddonException;
 import com.darkbladedev.engine.api.logging.CoreLogger;
@@ -9,9 +8,11 @@ import com.darkbladedev.engine.api.logging.LogKv;
 import com.darkbladedev.engine.api.logging.LogLevel;
 import com.darkbladedev.engine.api.logging.LogPhase;
 import com.darkbladedev.engine.api.logging.LogScope;
+import com.darkbladedev.engine.api.wrench.WrenchContext;
+import com.darkbladedev.engine.api.wrench.WrenchDispatcher;
+import com.darkbladedev.engine.api.wrench.WrenchResult;
 import com.darkbladedev.engine.manager.MultiblockManager;
 import com.darkbladedev.engine.model.MultiblockInstance;
-import com.darkbladedev.engine.model.MultiblockType;
 
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -20,7 +21,6 @@ import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
-import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
@@ -36,76 +36,54 @@ public class MultiblockListener implements Listener {
 
     private final MultiblockManager manager;
     private final Consumer<Event> eventCaller;
+    private final WrenchDispatcher wrenchDispatcher;
 
     public MultiblockListener(MultiblockManager manager) {
-        this(manager, Bukkit.getPluginManager()::callEvent);
+        this(manager, Bukkit.getPluginManager()::callEvent, null);
     }
 
     public MultiblockListener(MultiblockManager manager, Consumer<Event> eventCaller) {
+        this(manager, eventCaller, null);
+    }
+
+    public MultiblockListener(MultiblockManager manager, WrenchDispatcher wrenchDispatcher) {
+        this(manager, Bukkit.getPluginManager()::callEvent, wrenchDispatcher);
+    }
+
+    public MultiblockListener(MultiblockManager manager, Consumer<Event> eventCaller, WrenchDispatcher wrenchDispatcher) {
         this.manager = manager;
         this.eventCaller = eventCaller;
+        this.wrenchDispatcher = wrenchDispatcher;
     }
 
     @EventHandler
     public void onBlockPlace(BlockPlaceEvent event) {
-        Block block = event.getBlockPlaced();
-        checkController(block, event.getPlayer());
     }
     
     @EventHandler
     public void onInteract(PlayerInteractEvent event) {
-        if (event.getClickedBlock() == null) return;
-        // Fix: Prevent double execution (OffHand + MainHand)
-        if (event.getHand() != EquipmentSlot.HAND) return;
-        
-        // Check if interacting with existing structure
-        Optional<MultiblockInstance> instanceOpt = manager.getInstanceAt(event.getClickedBlock().getLocation());
-        if (instanceOpt.isPresent()) {
-             MultiblockInstance instance = instanceOpt.get();
-             MultiblockInteractEvent mbEvent = new MultiblockInteractEvent(instance, event.getPlayer(), event.getAction(), event.getClickedBlock());
-             eventCaller.accept(mbEvent);
-             if (mbEvent.isCancelled()) {
-                 event.setCancelled(true);
-                 return;
-             }
-             
-             // Execute Interact Actions
-             for (com.darkbladedev.engine.model.action.Action action : instance.type().onInteractActions()) {
-                 if (action != null && action.shouldExecuteOnInteract(event.getAction())) {
-                     if (action.cancelsVanillaOnInteract(event.getAction())) {
-                         event.setCancelled(true);
-                     }
-                     executeActionSafely("INTERACT", action, instance, event.getPlayer());
-                 }
-             }
+        if (event.getClickedBlock() == null) {
+            return;
         }
-        
-        if (event.getAction() == Action.RIGHT_CLICK_BLOCK) {
-            checkController(event.getClickedBlock(), event.getPlayer());
+        if (event.getHand() != EquipmentSlot.HAND) {
+            return;
         }
-    }
 
-    private void checkController(Block block, Player player) {
-        // Optimization: In a real plugin, we would have a map of Material -> List<MultiblockType>
-        // to avoid iterating all types.
-        for (MultiblockType type : manager.getTypes()) {
-            if (type.controllerMatcher().matches(block)) {
-                // Potential controller.
-                // Check if already an instance
-                if (manager.getInstanceAt(block.getLocation()).isPresent()) {
-                    continue; // Already active
-                }
-                
-                Optional<MultiblockInstance> instance = manager.tryCreate(block, type, player);
-                if (instance.isPresent()) {
-                    if (player != null) {
-                        player.sendMessage(Component.textOfChildren(
-                                Component.text("Structure formed: ", NamedTextColor.GREEN),
-                                Component.text(type.id(), NamedTextColor.WHITE)
-                        ));
-                    }
-                }
-            }
+        if (wrenchDispatcher == null) {
+            return;
+        }
+
+        WrenchContext ctx = new WrenchContext(
+                event.getPlayer(),
+                event.getClickedBlock(),
+                event.getAction(),
+                event.getItem(),
+                event.getHand()
+        );
+
+        WrenchResult result = wrenchDispatcher.dispatch(ctx);
+        if (result != null && result.cancelEvent()) {
+            event.setCancelled(true);
         }
     }
 

@@ -1,0 +1,14 @@
+core:
+  wrench:
+    required: "Necesitas una llave inglesa para hacer eso."
+    cooldown: "Espera {ms}ms antes de volver a usar la llave inglesa."
+    assembled: "Estructura formada: {type}"
+    disassembled: "Estructura destruida: {type}"
+    missing: "Faltan bloques: {missing}"
+    inspect:
+      title: "Estructura encontrada:"
+      type: "Tipo: {type}"
+      state: "Estado: {state}"
+      facing: "Dirección: {facing}"
+      anchor: "Ancla: {anchor}"
+      components: "Componentes requeridos:"

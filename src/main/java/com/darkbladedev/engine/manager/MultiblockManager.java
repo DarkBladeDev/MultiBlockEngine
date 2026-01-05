@@ -276,7 +276,9 @@ public class MultiblockManager {
 
     public void registerInstance(MultiblockInstance instance, boolean initializeCapabilities) {
         activeInstances.put(instance.anchorLocation(), instance);
-        blockToInstanceMap.put(instance.anchorLocation(), instance);
+        for (Location loc : instanceOccupiedLocations(instance)) {
+            blockToInstanceMap.put(loc, instance);
+        }
         if (initializeCapabilities) {
             initializeCapabilitiesOnce(instance);
         }
@@ -335,7 +337,9 @@ public class MultiblockManager {
     
     public void destroyInstance(MultiblockInstance instance) {
         activeInstances.remove(instance.anchorLocation());
-        blockToInstanceMap.remove(instance.anchorLocation());
+        for (Location loc : instanceOccupiedLocations(instance)) {
+            blockToInstanceMap.remove(loc);
+        }
         capabilitiesInitialized.remove(instance.anchorLocation());
         holograms.removeHologram(instance);
         
@@ -345,9 +349,43 @@ public class MultiblockManager {
         
         metrics.incrementDestroyed();
     }
+
+    private List<Location> instanceOccupiedLocations(MultiblockInstance instance) {
+        if (instance == null) {
+            return List.of();
+        }
+        Location anchor = instance.anchorLocation();
+        if (anchor == null || anchor.getWorld() == null) {
+            return List.of();
+        }
+
+        List<Location> out = new ArrayList<>();
+        out.add(anchor);
+
+        BlockFace facing = instance.facing() == null ? BlockFace.NORTH : instance.facing();
+        for (PatternEntry entry : instance.type().pattern()) {
+            if (entry == null || entry.offset() == null) {
+                continue;
+            }
+            Vector rotated = rotateVector(entry.offset(), facing);
+            Location loc = anchor.clone().add(rotated.getBlockX(), rotated.getBlockY(), rotated.getBlockZ());
+            out.add(loc);
+        }
+
+        return out;
+    }
     
     public void updateInstanceState(MultiblockInstance instance, MultiblockState newState) {
         instance.setState(newState);
+        if (storage != null && instance.type().persistent()) {
+            storage.saveInstance(instance);
+        }
+    }
+
+    public void persistInstance(MultiblockInstance instance) {
+        if (instance == null) {
+            return;
+        }
         if (storage != null && instance.type().persistent()) {
             storage.saveInstance(instance);
         }
