@@ -1,7 +1,7 @@
 commands:
   usage:
-    console: "Usage: /{label} <inspect|reload|status|debug|services>"
-    player: "Usage: /{label} <inspect|reload|status|debug|services>"
+    console: "Usage: /{label} <inspect|reload|status|debug|report|services>"
+    player: "Usage: /{label} <inspect|reload|status|debug|report|services>"
   error:
     unknown_subcommand: "Unknown subcommand. Use /mbe to see help."
   debug:
@@ -9,6 +9,14 @@ commands:
     type_not_found: "Type not found: {id}"
     player_not_found: "Player not found: {player}"
     must_look_at_block: "You must look at a block."
+  report:
+    none: "No recent assembly attempt."
+    title: "Last assembly attempt:"
+    result: "Result: {result}"
+    trigger: "Trigger: {trigger}"
+    multiblock: "Matched: {multiblock}"
+    reason: "Reason: {reason}"
+    player_not_found: "Player not found: {player}"
   reload:
     start: "Reloading..."
     done_types: "Reloaded {count} multiblocks."

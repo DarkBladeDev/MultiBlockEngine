@@ -11,6 +11,8 @@ import com.darkbladedev.engine.api.logging.LogScope;
 import com.darkbladedev.engine.api.wrench.WrenchContext;
 import com.darkbladedev.engine.api.wrench.WrenchDispatcher;
 import com.darkbladedev.engine.api.wrench.WrenchResult;
+import com.darkbladedev.engine.assembly.AssemblyCoordinator;
+import com.darkbladedev.engine.api.assembly.AssemblyContext;
 import com.darkbladedev.engine.manager.MultiblockManager;
 import com.darkbladedev.engine.model.MultiblockInstance;
 
@@ -26,6 +28,7 @@ import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 
 import java.util.Optional;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
@@ -37,27 +40,55 @@ public class MultiblockListener implements Listener {
     private final MultiblockManager manager;
     private final Consumer<Event> eventCaller;
     private final WrenchDispatcher wrenchDispatcher;
+    private final AssemblyCoordinator assembly;
 
     public MultiblockListener(MultiblockManager manager) {
-        this(manager, Bukkit.getPluginManager()::callEvent, null);
+        this(manager, Bukkit.getPluginManager()::callEvent, null, null);
     }
 
     public MultiblockListener(MultiblockManager manager, Consumer<Event> eventCaller) {
-        this(manager, eventCaller, null);
-    }
-
-    public MultiblockListener(MultiblockManager manager, WrenchDispatcher wrenchDispatcher) {
-        this(manager, Bukkit.getPluginManager()::callEvent, wrenchDispatcher);
+        this(manager, eventCaller, null, null);
     }
 
     public MultiblockListener(MultiblockManager manager, Consumer<Event> eventCaller, WrenchDispatcher wrenchDispatcher) {
+        this(manager, eventCaller, wrenchDispatcher, null);
+    }
+
+    public MultiblockListener(MultiblockManager manager, WrenchDispatcher wrenchDispatcher) {
+        this(manager, Bukkit.getPluginManager()::callEvent, wrenchDispatcher, null);
+    }
+
+    public MultiblockListener(MultiblockManager manager, WrenchDispatcher wrenchDispatcher, AssemblyCoordinator assembly) {
+        this(manager, Bukkit.getPluginManager()::callEvent, wrenchDispatcher, assembly);
+    }
+
+
+    public MultiblockListener(MultiblockManager manager, Consumer<Event> eventCaller, WrenchDispatcher wrenchDispatcher, AssemblyCoordinator assembly) {
         this.manager = manager;
         this.eventCaller = eventCaller;
         this.wrenchDispatcher = wrenchDispatcher;
+        this.assembly = assembly;
     }
 
     @EventHandler
     public void onBlockPlace(BlockPlaceEvent event) {
+        if (assembly == null) {
+            return;
+        }
+        if (event.isCancelled()) {
+            return;
+        }
+        AssemblyContext ctx = new AssemblyContext(
+                AssemblyContext.Cause.BLOCK_PLACE,
+                event.getPlayer(),
+                event.getBlockPlaced(),
+                null,
+                event.getItemInHand(),
+                null,
+                event.getPlayer() != null && event.getPlayer().isSneaking(),
+                Map.of()
+        );
+        assembly.tryAssembleFromPlacedBlock(event.getBlockPlaced(), ctx);
     }
     
     @EventHandler
@@ -69,22 +100,47 @@ public class MultiblockListener implements Listener {
             return;
         }
 
-        if (wrenchDispatcher == null) {
+        if (wrenchDispatcher != null) {
+            WrenchContext ctx = new WrenchContext(
+                    event.getPlayer(),
+                    event.getClickedBlock(),
+                    event.getAction(),
+                    event.getItem(),
+                    event.getHand()
+            );
+
+            WrenchResult result = wrenchDispatcher.dispatch(ctx);
+            if (result != null && result.cancelEvent()) {
+                event.setCancelled(true);
+                return;
+            }
+        }
+
+        if (assembly == null) {
+            return;
+        }
+        if (event.isCancelled()) {
+            return;
+        }
+        if (event.getAction() != org.bukkit.event.block.Action.RIGHT_CLICK_BLOCK) {
             return;
         }
 
-        WrenchContext ctx = new WrenchContext(
+        if (event.getPlayer() == null || !event.getPlayer().isSneaking()) {
+            return;
+        }
+
+        AssemblyContext ctx = new AssemblyContext(
+                AssemblyContext.Cause.PLAYER_INTERACT,
                 event.getPlayer(),
                 event.getClickedBlock(),
                 event.getAction(),
                 event.getItem(),
-                event.getHand()
+                event.getHand(),
+                event.getPlayer() != null && event.getPlayer().isSneaking(),
+                Map.of("wrench", false)
         );
-
-        WrenchResult result = wrenchDispatcher.dispatch(ctx);
-        if (result != null && result.cancelEvent()) {
-            event.setCancelled(true);
-        }
+        assembly.tryAssembleAt(event.getClickedBlock(), ctx);
     }
 
     @EventHandler

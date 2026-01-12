@@ -6,6 +6,7 @@ import com.darkbladedev.engine.api.logging.LogKv;
 import com.darkbladedev.engine.api.logging.LogLevel;
 import com.darkbladedev.engine.api.logging.LogPhase;
 import com.darkbladedev.engine.api.logging.LogScope;
+import com.darkbladedev.engine.api.assembly.AssemblyTriggerType;
 import com.darkbladedev.engine.model.BlockMatcher;
 import com.darkbladedev.engine.model.DisplayNameConfig;
 import com.darkbladedev.engine.model.MultiblockInstance;
@@ -271,6 +272,23 @@ public class MultiblockParser {
         String version = config.getString("version");
         if (version == null) throw new IllegalArgumentException("Missing 'version'");
 
+        String triggerRaw = config.getString("assembly.trigger");
+        String assemblyTrigger;
+        if (triggerRaw == null || triggerRaw.isBlank()) {
+            assemblyTrigger = AssemblyTriggerType.WRENCH_USE.id();
+            log.logInternal(new LogScope.Core(), LogPhase.LOAD, LogLevel.WARN, "Missing 'assembly.trigger' (defaulting)", null, new LogKv[] {
+                    LogKv.kv("id", id),
+                    LogKv.kv("default", assemblyTrigger)
+            }, Set.of());
+        } else {
+            String trimmed = triggerRaw.trim();
+            if (trimmed.contains(":")) {
+                assemblyTrigger = trimmed;
+            } else {
+                assemblyTrigger = AssemblyTriggerType.valueOf(trimmed.toUpperCase(Locale.ROOT)).id();
+            }
+        }
+
         // Parse controller matcher
         Object controllerObj = config.get("controller");
         if (controllerObj == null) throw new IllegalArgumentException("Missing 'controller'");
@@ -329,7 +347,7 @@ public class MultiblockParser {
         
         int tickInterval = config.getInt("tick_interval", 20);
         
-        return new MultiblockType(id, version, new Vector(0, 0, 0), controllerMatcher, pattern, true, behaviorConfig, defaultVariables, onCreateActions, onTickActions, onInteractActions, onBreakActions, displayName, tickInterval);
+        return new MultiblockType(id, version, assemblyTrigger, new Vector(0, 0, 0), controllerMatcher, pattern, true, behaviorConfig, defaultVariables, onCreateActions, onTickActions, onInteractActions, onBreakActions, displayName, tickInterval);
     }
     
     private List<Action> parseActions(YamlConfiguration config, String path) {

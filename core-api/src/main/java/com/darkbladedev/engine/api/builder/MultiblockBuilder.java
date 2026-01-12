@@ -1,6 +1,7 @@
 package com.darkbladedev.engine.api.builder;
 
 import com.darkbladedev.engine.api.capability.Capability;
+import com.darkbladedev.engine.api.assembly.AssemblyTriggerType;
 import com.darkbladedev.engine.model.*;
 import com.darkbladedev.engine.model.action.Action;
 import org.bukkit.util.Vector;
@@ -17,6 +18,7 @@ public class MultiblockBuilder {
     private String version = "1.0";
     private int tickInterval = 20;
     private Vector controllerOffset = new Vector(0, 0, 0);
+    private String assemblyTrigger = AssemblyTriggerType.WRENCH_USE.id();
     private BlockMatcher controllerMatcher;
     private final List<PatternEntry> pattern = new ArrayList<>();
     private final Map<String, Object> defaultVariables = new HashMap<>();
@@ -48,6 +50,11 @@ public class MultiblockBuilder {
 
     public MultiblockBuilder controller(BlockMatcher matcher) {
         this.controllerMatcher = matcher;
+        return this;
+    }
+
+    public MultiblockBuilder assemblyTrigger(String triggerId) {
+        this.assemblyTrigger = triggerId;
         return this;
     }
 
@@ -96,6 +103,7 @@ public class MultiblockBuilder {
         return new MultiblockType(
             id,
             version,
+            assemblyTrigger,
             controllerOffset,
             controllerMatcher,
             pattern,

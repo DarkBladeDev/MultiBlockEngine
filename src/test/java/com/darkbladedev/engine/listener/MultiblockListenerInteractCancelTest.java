@@ -20,6 +20,7 @@ import com.darkbladedev.engine.model.MultiblockInstance;
 import com.darkbladedev.engine.model.MultiblockType;
 import com.darkbladedev.engine.model.PatternEntry;
 import com.darkbladedev.engine.model.action.Action;
+import com.darkbladedev.engine.api.assembly.AssemblyTriggerType;
 import com.darkbladedev.engine.wrench.DefaultWrenchDispatcher;
 import org.bukkit.Material;
 import org.bukkit.Location;
@@ -155,6 +156,43 @@ public class MultiblockListenerInteractCancelTest {
         assertTrue(created.isPresent());
         assertEquals("storage:disk", created.get().type().id());
         assertTrue(interactEvent.isCancelled());
+    }
+
+    @Test
+    void sneakRightClickAssemblyDoesNotCancelVanilla() throws Exception {
+        MultiBlockEngine plugin = MockBukkit.load(MultiBlockEngine.class);
+
+        MultiblockType type = new MultiblockType(
+                "custom:sneak_form",
+                "1.0",
+                AssemblyTriggerType.SNEAK_RIGHT_CLICK.id(),
+                new Vector(0, 0, 0),
+                b -> b != null && b.getType() == Material.BEACON,
+                List.of(new PatternEntry(new Vector(0, 0, 0), b -> b != null && b.getType() == Material.BEACON, false)),
+                false,
+                Map.of(),
+                Map.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                new DisplayNameConfig("", false, "hologram"),
+                20
+        );
+        plugin.getManager().registerType(type);
+
+        Location controllerLoc = new Location(world, 20, 64, 20);
+        Block controller = world.getBlockAt(controllerLoc);
+        controller.setType(Material.BEACON);
+
+        player.setSneaking(true);
+        PlayerInteractEvent interactEvent = newPlayerInteractEvent(player, org.bukkit.event.block.Action.RIGHT_CLICK_BLOCK, null, controller, EquipmentSlot.HAND);
+        server.getPluginManager().callEvent(interactEvent);
+
+        Optional<MultiblockInstance> created = plugin.getManager().getInstanceAt(controllerLoc);
+        assertTrue(created.isPresent());
+        assertEquals("custom:sneak_form", created.get().type().id());
+        assertFalse(interactEvent.isCancelled());
     }
 
     @Test

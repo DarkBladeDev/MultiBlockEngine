@@ -16,6 +16,10 @@ import com.darkbladedev.engine.api.wrench.WrenchContext;
 import com.darkbladedev.engine.api.wrench.WrenchDispatcher;
 import com.darkbladedev.engine.api.wrench.WrenchInteractable;
 import com.darkbladedev.engine.api.wrench.WrenchResult;
+import com.darkbladedev.engine.assembly.AssemblyCoordinator;
+import com.darkbladedev.engine.api.assembly.AssemblyContext;
+import com.darkbladedev.engine.api.assembly.AssemblyReport;
+import com.darkbladedev.engine.api.assembly.AssemblyTriggerType;
 import com.darkbladedev.engine.item.bridge.ItemStackBridge;
 import com.darkbladedev.engine.manager.MultiblockManager;
 import com.darkbladedev.engine.model.MultiblockInstance;
@@ -77,19 +81,29 @@ public final class DefaultWrenchDispatcher implements WrenchDispatcher {
     private final ItemStackBridge itemStackBridge;
     private final I18nService i18n;
     private final Consumer<Event> eventCaller;
+    private final AssemblyCoordinator assembly;
     private final Map<String, WrenchInteractable> actions = new ConcurrentHashMap<>();
     private final Map<java.util.UUID, Instant> cooldowns = new ConcurrentHashMap<>();
 
     private static final Duration COOLDOWN = Duration.ofMillis(500);
 
     public DefaultWrenchDispatcher(MultiblockManager manager, ItemStackBridge itemStackBridge, I18nService i18n) {
-        this(manager, itemStackBridge, i18n, Bukkit.getPluginManager()::callEvent);
+        this(manager, itemStackBridge, i18n, null, Bukkit.getPluginManager()::callEvent);
+    }
+
+    public DefaultWrenchDispatcher(MultiblockManager manager, ItemStackBridge itemStackBridge, I18nService i18n, AssemblyCoordinator assembly) {
+        this(manager, itemStackBridge, i18n, assembly, Bukkit.getPluginManager()::callEvent);
     }
 
     public DefaultWrenchDispatcher(MultiblockManager manager, ItemStackBridge itemStackBridge, I18nService i18n, Consumer<Event> eventCaller) {
+        this(manager, itemStackBridge, i18n, null, eventCaller);
+    }
+
+    public DefaultWrenchDispatcher(MultiblockManager manager, ItemStackBridge itemStackBridge, I18nService i18n, AssemblyCoordinator assembly, Consumer<Event> eventCaller) {
         this.manager = Objects.requireNonNull(manager, "manager");
         this.itemStackBridge = Objects.requireNonNull(itemStackBridge, "itemStackBridge");
         this.i18n = i18n;
+        this.assembly = assembly;
         this.eventCaller = Objects.requireNonNull(eventCaller, "eventCaller");
     }
 
@@ -157,9 +171,9 @@ public final class DefaultWrenchDispatcher implements WrenchDispatcher {
             return addonHandled;
         }
 
-        Optional<MultiblockInstance> created = tryAssemble(block, player);
-        if (created.isPresent()) {
-            send(player, MSG_ASSEMBLED, Map.of("type", created.get().type().id()));
+        AssemblyReport assembled = tryAssemble(block, context);
+        if (assembled != null && assembled.result() == AssemblyReport.Result.SUCCESS && assembled.multiblockId() != null && !assembled.multiblockId().isBlank()) {
+            send(player, MSG_ASSEMBLED, Map.of("type", assembled.multiblockId()));
             playSuccess(player, block.getLocation());
             return WrenchResult.handled(true);
         }
@@ -241,9 +255,31 @@ public final class DefaultWrenchDispatcher implements WrenchDispatcher {
         return WrenchResult.notHandled();
     }
 
-    private Optional<MultiblockInstance> tryAssemble(Block controller, Player player) {
+    private AssemblyReport tryAssemble(Block controller, WrenchContext context) {
+        if (controller == null || context == null) {
+            return null;
+        }
+        if (assembly != null) {
+            AssemblyContext ctx = new AssemblyContext(
+                    AssemblyContext.Cause.PLAYER_INTERACT,
+                    context.player(),
+                    controller,
+                    context.action(),
+                    context.item(),
+                    context.hand(),
+                    context.player() != null && context.player().isSneaking(),
+                    Map.of("wrench", true)
+            );
+            return assembly.tryAssembleAt(controller, ctx);
+        }
+
+        Player player = context.player();
         for (MultiblockType type : manager.getTypes()) {
             if (type == null) {
+                continue;
+            }
+            String trigger = type.assemblyTrigger();
+            if (trigger != null && !trigger.isBlank() && !trigger.equalsIgnoreCase(AssemblyTriggerType.WRENCH_USE.id())) {
                 continue;
             }
             if (!type.controllerMatcher().matches(controller)) {
@@ -254,10 +290,10 @@ public final class DefaultWrenchDispatcher implements WrenchDispatcher {
             }
             Optional<MultiblockInstance> instance = manager.tryCreate(controller, type, player);
             if (instance.isPresent()) {
-                return instance;
+                return new AssemblyReport(AssemblyTriggerType.WRENCH_USE.id(), true, true, AssemblyReport.MatcherResult.MATCH, List.of(), AssemblyReport.Result.SUCCESS, type.id(), "");
             }
         }
-        return Optional.empty();
+        return null;
     }
 
     private boolean isControllerBlock(Block block) {
@@ -414,7 +450,14 @@ public final class DefaultWrenchDispatcher implements WrenchDispatcher {
 
         List<MultiblockType> candidates = new ArrayList<>();
         for (MultiblockType type : manager.getTypes()) {
-            if (type != null && type.controllerMatcher().matches(controller)) {
+            if (type == null) {
+                continue;
+            }
+            String trigger = type.assemblyTrigger();
+            if (trigger != null && !trigger.isBlank() && !trigger.equalsIgnoreCase(AssemblyTriggerType.WRENCH_USE.id())) {
+                continue;
+            }
+            if (type.controllerMatcher().matches(controller)) {
                 candidates.add(type);
             }
         }

@@ -47,6 +47,10 @@ import java.util.Map;
 import java.util.Set;
 
 import com.darkbladedev.engine.debug.DebugManager;
+import com.darkbladedev.engine.assembly.AssemblyCoordinator;
+import com.darkbladedev.engine.assembly.BuiltinAssemblyTriggers;
+import com.darkbladedev.engine.assembly.DefaultAssemblyTriggerRegistry;
+import com.darkbladedev.engine.api.assembly.AssemblyTriggerRegistry;
 
 public class MultiBlockEngine extends JavaPlugin {
 
@@ -61,6 +65,8 @@ public class MultiBlockEngine extends JavaPlugin {
     private DebugManager debugManager;
     private AddonManager addonManager;
     private LoggingManager loggingManager;
+    private AssemblyTriggerRegistry assemblyTriggers;
+    private AssemblyCoordinator assemblyCoordinator;
 
     @Override
     public void onEnable() {
@@ -134,12 +140,20 @@ public class MultiBlockEngine extends JavaPlugin {
         addonManager.registerCoreService(LocaleProvider.class, localeProvider);
         addonManager.registerCoreService(I18nService.class, i18n);
 
-        WrenchDispatcher wrenchDispatcher = new DefaultWrenchDispatcher(manager, itemStackBridge, i18n);
+        DefaultAssemblyTriggerRegistry triggerRegistry = new DefaultAssemblyTriggerRegistry();
+        BuiltinAssemblyTriggers.registerAll(triggerRegistry);
+        addonManager.registerCoreService(AssemblyTriggerRegistry.class, triggerRegistry);
+        assemblyTriggers = triggerRegistry;
+
+        assemblyCoordinator = new AssemblyCoordinator(manager, triggerRegistry, log);
+
+        WrenchDispatcher wrenchDispatcher = new DefaultWrenchDispatcher(manager, itemStackBridge, i18n, assemblyCoordinator);
         addonManager.registerCoreService(WrenchDispatcher.class, wrenchDispatcher);
 
         addonManager.loadAddons();
 
         ensureDefaultLangFiles();
+        //ensureDefaultMultiblockFiles();
         i18n.reload();
         
         // Ensure directory exists
@@ -195,7 +209,7 @@ public class MultiBlockEngine extends JavaPlugin {
         
         // Register Listeners
         WrenchDispatcher wd = addonManager.getCoreService(WrenchDispatcher.class);
-        getServer().getPluginManager().registerEvents(new MultiblockListener(manager, wd), this);
+        getServer().getPluginManager().registerEvents(new MultiblockListener(manager, wd, assemblyCoordinator), this);
         
         // Register Commands
         MultiblockCommand cmd = new MultiblockCommand(this);
@@ -281,6 +295,14 @@ public class MultiBlockEngine extends JavaPlugin {
         return addonManager;
     }
 
+    public AssemblyTriggerRegistry getAssemblyTriggers() {
+        return assemblyTriggers;
+    }
+
+    public AssemblyCoordinator getAssemblyCoordinator() {
+        return assemblyCoordinator;
+    }
+
     public LoggingManager getLoggingManager() {
         return loggingManager;
     }
@@ -296,6 +318,18 @@ public class MultiBlockEngine extends JavaPlugin {
         saveResource("lang/es_es/services.yml", false);
         saveResource("lang/es_es/items.yml", false);
         saveResource("lang/es_es/ui.yml", false);
+    }
+
+    private void ensureDefaultMultiblockFiles() {
+        saveResource("multiblocks/base_machine.yml", false);
+        saveResource("multiblocks/mana_generator.yml", false);
+        saveResource("multiblocks/example_portal.yml", false);
+        saveResource("multiblocks/healer_machine.yml", false);
+        saveResource("multiblocks/miner_machine.yml", false);
+        saveResource("multiblocks/test_action.yml", false);
+        saveResource("multiblocks/test_complex.yml", false);
+        saveResource("multiblocks/test_optional.yml", false);
+        saveResource("multiblocks/test_ticking.yml", false);
     }
 
     private static void registerCoreItems(DefaultItemService itemService) {

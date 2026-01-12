@@ -8,6 +8,7 @@ import com.darkbladedev.engine.command.services.impl.ItemsCommandService;
 import com.darkbladedev.engine.command.services.impl.UiCommandService;
 import com.darkbladedev.engine.api.i18n.I18nService;
 import com.darkbladedev.engine.api.i18n.MessageKey;
+import com.darkbladedev.engine.api.assembly.AssemblyReport;
 import com.darkbladedev.engine.model.MultiblockInstance;
 import com.darkbladedev.engine.model.MultiblockType;
 import com.darkbladedev.engine.model.PatternEntry;
@@ -42,6 +43,13 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
     private static final MessageKey MSG_DEBUG_TYPE_NOT_FOUND = MessageKey.of(ORIGIN, "commands.debug.type_not_found");
     private static final MessageKey MSG_DEBUG_PLAYER_NOT_FOUND = MessageKey.of(ORIGIN, "commands.debug.player_not_found");
     private static final MessageKey MSG_DEBUG_MUST_LOOK_AT_BLOCK = MessageKey.of(ORIGIN, "commands.debug.must_look_at_block");
+    private static final MessageKey MSG_REPORT_NONE = MessageKey.of(ORIGIN, "commands.report.none");
+    private static final MessageKey MSG_REPORT_TITLE = MessageKey.of(ORIGIN, "commands.report.title");
+    private static final MessageKey MSG_REPORT_RESULT = MessageKey.of(ORIGIN, "commands.report.result");
+    private static final MessageKey MSG_REPORT_TRIGGER = MessageKey.of(ORIGIN, "commands.report.trigger");
+    private static final MessageKey MSG_REPORT_MULTIBLOCK = MessageKey.of(ORIGIN, "commands.report.multiblock");
+    private static final MessageKey MSG_REPORT_REASON = MessageKey.of(ORIGIN, "commands.report.reason");
+    private static final MessageKey MSG_REPORT_PLAYER_NOT_FOUND = MessageKey.of(ORIGIN, "commands.report.player_not_found");
     private static final MessageKey MSG_RELOAD_START = MessageKey.of(ORIGIN, "commands.reload.start");
     private static final MessageKey MSG_RELOAD_DONE_TYPES = MessageKey.of(ORIGIN, "commands.reload.done_types");
     private static final MessageKey MSG_RELOAD_DONE_RESTART = MessageKey.of(ORIGIN, "commands.reload.done_restart");
@@ -99,6 +107,9 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
         } else if (safeArgs[0].equalsIgnoreCase("debug")) {
             handleDebug(player, safeArgs);
             return true;
+        } else if (safeArgs[0].equalsIgnoreCase("report")) {
+            handleReport(player, safeArgs);
+            return true;
         }
 
         player.sendMessage(Component.text(tr(player, MSG_UNKNOWN_SUBCOMMAND), NamedTextColor.RED));
@@ -139,6 +150,37 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
         
         // Start session
         plugin.getDebugManager().startSession(targetPlayer, type, targetBlock.getLocation());
+    }
+
+    private void handleReport(Player player, String[] args) {
+        Player target = player;
+        if (args.length >= 2) {
+            target = org.bukkit.Bukkit.getPlayer(args[1]);
+            if (target == null) {
+                player.sendMessage(Component.text(tr(player, MSG_REPORT_PLAYER_NOT_FOUND, "player", args[1]), NamedTextColor.RED));
+                return;
+            }
+        }
+
+        if (plugin.getAssemblyCoordinator() == null) {
+            player.sendMessage(Component.text(tr(player, MSG_REPORT_NONE), NamedTextColor.YELLOW));
+            return;
+        }
+
+        AssemblyReport report = plugin.getAssemblyCoordinator()
+                .lastReport(target.getUniqueId())
+                .orElse(null);
+
+        if (report == null) {
+            player.sendMessage(Component.text(tr(player, MSG_REPORT_NONE), NamedTextColor.YELLOW));
+            return;
+        }
+
+        player.sendMessage(Component.text(tr(player, MSG_REPORT_TITLE), NamedTextColor.AQUA));
+        player.sendMessage(Component.text(tr(player, MSG_REPORT_RESULT, "result", report.result().name()), NamedTextColor.GRAY));
+        player.sendMessage(Component.text(tr(player, MSG_REPORT_TRIGGER, "trigger", report.trigger()), NamedTextColor.GRAY));
+        player.sendMessage(Component.text(tr(player, MSG_REPORT_MULTIBLOCK, "multiblock", report.multiblockId()), NamedTextColor.GRAY));
+        player.sendMessage(Component.text(tr(player, MSG_REPORT_REASON, "reason", report.failureReason()), NamedTextColor.GRAY));
     }
 
     private void handleReload(Player player) {
@@ -301,6 +343,7 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
             subcommands.add("status");
             subcommands.add("stats");
             subcommands.add("debug");
+            subcommands.add("report");
             subcommands.add("services");
             
             return filter(subcommands, args[0]);
@@ -314,6 +357,8 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
         } else if (args.length == 3 && args[0].equalsIgnoreCase("debug")) {
             // Autocomplete players
             return null; // Bukkit default player completion
+        } else if (args.length == 2 && args[0].equalsIgnoreCase("report")) {
+            return null;
         }
         
         return Collections.emptyList();
