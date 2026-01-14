@@ -65,7 +65,7 @@ public final class AssemblyCoordinator {
 
         AssemblyContext safeContext = ensureAttributes(context);
 
-        for (MultiblockType type : manager.getTypes()) {
+        for (MultiblockType type : manager.getTypesDeterministic()) {
             if (type == null) {
                 continue;
             }
@@ -107,7 +107,7 @@ public final class AssemblyCoordinator {
         AssemblyContext safeContext = ensureAttributes(context);
         String requiredTrigger = AssemblyTriggerType.ON_FINAL_BLOCK_PLACED.id();
 
-        for (MultiblockType type : manager.getTypes()) {
+        for (MultiblockType type : manager.getTypesDeterministic()) {
             if (type == null) {
                 continue;
             }
@@ -307,4 +307,3 @@ public final class AssemblyCoordinator {
         }
     }
 }
-

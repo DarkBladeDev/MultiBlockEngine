@@ -331,15 +331,34 @@ public class AddonManager {
 
         validateCoreApiType(addonId, api);
 
-        pendingExposures.compute(addonId, (k, list) -> {
-            List<PendingExposure> next = list == null ? new ArrayList<>() : new ArrayList<>(list);
-            next.add(new PendingExposure(api, implementation, priority));
-            return List.copyOf(next);
-        });
+        Object provider;
+        try {
+            provider = BukkitServiceBridge.exposeProviderRaw(plugin, api, implementation, priority);
+        } catch (Throwable t) {
+            log.logInternal(new LogScope.Addon(addonId, addonVersion(addonId)), LogPhase.SERVICE_REGISTER, LogLevel.ERROR,
+                "Failed to expose public service",
+                t,
+                new LogKv[] {
+                    LogKv.kv("service", api.getName()),
+                    LogKv.kv("priority", priority.name())
+                },
+                Set.of()
+            );
+            if (t instanceof RuntimeException rt) {
+                throw rt;
+            }
+            throw new RuntimeException(t);
+        }
 
-        log.logInternal(new LogScope.Addon(addonId, addonVersion(addonId)), LogPhase.SERVICE_REGISTER, LogLevel.DEBUG,
-            "Service exposure queued", null,
-            new LogKv[] { LogKv.kv("service", api.getName()), LogKv.kv("priority", priority.name()) },
+        trackExposedService(addonId, api, provider);
+
+        log.logInternal(new LogScope.Addon(addonId, addonVersion(addonId)), LogPhase.SERVICE_REGISTER, LogLevel.INFO,
+            "Public service exposed",
+            null,
+            new LogKv[] {
+                LogKv.kv("service", api.getName()),
+                LogKv.kv("priority", priority.name())
+            },
             Set.of()
         );
     }
@@ -479,10 +498,12 @@ public class AddonManager {
             addon.onLoad(context);
         } catch (AddonException e) {
             failAddon(addonId, AddonException.Phase.LOAD, e.getMessage(), e.getCause(), e.isFatal());
+            unexposeAddonServices(addonId);
             close(loader);
             return;
         } catch (Throwable t) {
             failAddon(addonId, AddonException.Phase.LOAD, "Unhandled exception during onLoad", t, true);
+            unexposeAddonServices(addonId);
             close(loader);
             return;
         }

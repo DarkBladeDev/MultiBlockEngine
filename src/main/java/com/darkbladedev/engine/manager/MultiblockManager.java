@@ -39,6 +39,7 @@ public class MultiblockManager {
     private AddonManager addonManager;
     private StorageManager storage;
     private BukkitTask tickTask;
+    private final Map<String, List<MultiblockType>> variantsBySignature = new HashMap<>();
     
     // Supported rotations
     private static final BlockFace[] ROTATIONS = {BlockFace.NORTH, BlockFace.EAST, BlockFace.SOUTH, BlockFace.WEST};
@@ -56,6 +57,13 @@ public class MultiblockManager {
             throw new IllegalArgumentException("Duplicate multiblock id: " + type.id());
         }
         types.put(type.id(), type);
+        String sig = computeSignature(type);
+        variantsBySignature.compute(sig, (k, list) -> {
+            List<MultiblockType> next = list == null ? new ArrayList<>() : new ArrayList<>(list);
+            next.add(type);
+            next.sort(this::variantComparator);
+            return List.copyOf(next);
+        });
     }
     
     public Optional<MultiblockType> getType(String id) {
@@ -64,6 +72,12 @@ public class MultiblockManager {
     
     public Collection<MultiblockType> getTypes() {
         return Collections.unmodifiableCollection(types.values());
+    }
+
+    public List<MultiblockType> getTypesDeterministic() {
+        List<MultiblockType> out = new ArrayList<>(types.values());
+        out.sort(this::variantComparator);
+        return List.copyOf(out);
     }
     
     public void unregisterAll() {
@@ -74,6 +88,7 @@ public class MultiblockManager {
         blockToInstanceMap.clear();
         capabilitiesInitialized.clear();
         metrics.reset();
+        variantsBySignature.clear();
     }
     
     public void reloadTypes(Collection<MultiblockType> newTypes) {
@@ -169,6 +184,8 @@ public class MultiblockManager {
             if (checkPattern(anchor, type, facing)) {
                  // If valid, create instance with this facing
                 MultiblockInstance instance = new MultiblockInstance(type, anchor.getLocation(), facing);
+                instance.setVariable("signature", computeSignature(type));
+                instance.setVariable("variant", type.id());
                 
                 // Fire Event
                 MultiblockFormEvent event = new MultiblockFormEvent(instance, player);
@@ -267,6 +284,140 @@ public class MultiblockManager {
             case SOUTH: return new Vector(-v.getX(), v.getY(), -v.getZ());
             case WEST: return new Vector(v.getZ(), v.getY(), -v.getX());
             default: return v.clone();
+        }
+    }
+
+    public List<MultiblockType> variantsForSignature(String signature) {
+        List<MultiblockType> list = variantsBySignature.get(signature);
+        return list == null ? List.of() : list;
+    }
+
+    public Optional<MultiblockInstance> switchVariant(MultiblockInstance current, Player player) {
+        if (current == null || current.anchorLocation() == null || current.type() == null) {
+            return Optional.empty();
+        }
+        Object sigVar = current.getVariable("signature");
+        String sig = sigVar == null ? null : String.valueOf(sigVar);
+        if (sig == null || sig.isBlank() || "null".equalsIgnoreCase(sig)) {
+            sig = computeSignature(current.type());
+        }
+        List<MultiblockType> variants = variantsForSignature(sig);
+        if (variants.isEmpty()) {
+            return Optional.empty();
+        }
+        int idx = 0;
+        for (int i = 0; i < variants.size(); i++) {
+            if (variants.get(i).id().equalsIgnoreCase(current.type().id())) {
+                idx = i;
+                break;
+            }
+        }
+        int nextIdx = (idx + 1) % variants.size();
+        MultiblockType nextType = variants.get(nextIdx);
+        Block anchorBlock = current.anchorLocation().getBlock();
+        BlockFace facing = current.facing() == null ? BlockFace.NORTH : current.facing();
+        if (!checkPattern(anchorBlock, nextType, facing)) {
+            return Optional.empty();
+        }
+        Map<String, Object> preserved = new HashMap<>(current.getVariables());
+        MultiblockInstance next = new MultiblockInstance(nextType, current.anchorLocation(), facing, current.state(), preserved);
+        next.setVariable("signature", sig);
+        next.setVariable("variant", nextType.id());
+        MultiblockFormEvent event = new MultiblockFormEvent(next, player);
+        Bukkit.getPluginManager().callEvent(event);
+        if (event.isCancelled()) {
+            return Optional.empty();
+        }
+        destroyInstance(current);
+        registerInstance(next);
+        for (Action action : nextType.onCreateActions()) {
+            executeActionSafely("CREATE", action, next, player);
+        }
+        if (storage != null && nextType.persistent()) {
+            storage.saveInstance(next);
+        }
+        holograms.spawnHologram(next);
+        return Optional.of(next);
+    }
+
+    private int variantComparator(MultiblockType a, MultiblockType b) {
+        boolean aCore = !containsNamespace(a.id());
+        boolean bCore = !containsNamespace(b.id());
+        if (aCore != bCore) {
+            return aCore ? -1 : 1;
+        }
+        return a.id().compareToIgnoreCase(b.id());
+    }
+
+    private boolean containsNamespace(String id) {
+        return id != null && id.contains(":");
+    }
+
+    public String computeSignature(MultiblockType type) {
+        String raw = computeSignatureRaw(type);
+        return sha256(raw);
+    }
+
+    private String computeSignatureRaw(MultiblockType type) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("controller:").append(matcherKey(type.controllerMatcher())).append("|");
+        List<String> parts = new ArrayList<>();
+        for (PatternEntry entry : type.pattern()) {
+            Vector o = entry.offset();
+            String k = matcherKey(entry.matcher());
+            parts.add(o.getBlockX() + "," + o.getBlockY() + "," + o.getBlockZ() + "=" + k + (entry.optional() ? "?" : "!"));
+        }
+        parts.sort(String::compareToIgnoreCase);
+        sb.append(String.join(";", parts));
+        return sb.toString();
+    }
+
+    private String matcherKey(com.darkbladedev.engine.model.BlockMatcher matcher) {
+        if (matcher == null) {
+            return "";
+        }
+        if (matcher instanceof com.darkbladedev.engine.model.matcher.ExactMaterialMatcher m) {
+            return m.material() == null ? "" : m.material().name();
+        }
+        if (matcher instanceof com.darkbladedev.engine.model.matcher.TagMatcher m) {
+            if (m.tag() == null || m.tag().getKey() == null) {
+                return "";
+            }
+            return "#" + m.tag().getKey();
+        }
+        if (matcher instanceof com.darkbladedev.engine.model.matcher.AirMatcher) {
+            return "AIR";
+        }
+        if (matcher instanceof com.darkbladedev.engine.model.matcher.BlockDataMatcher m) {
+            return m.expectedData() == null ? "" : m.expectedData().getAsString();
+        }
+        if (matcher instanceof com.darkbladedev.engine.model.matcher.AnyOfMatcher m) {
+            List<String> parts = new ArrayList<>();
+            for (com.darkbladedev.engine.model.BlockMatcher sub : m.matchers()) {
+                String s = matcherKey(sub);
+                if (!s.isBlank()) {
+                    parts.add(s);
+                }
+            }
+            parts.sort(String::compareToIgnoreCase);
+            return String.join("|", parts);
+        }
+        return matcher.getClass().getSimpleName();
+    }
+
+    private String sha256(String s) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] d = md.digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(d.length * 2);
+            for (byte b : d) {
+                String h = Integer.toHexString(b & 0xFF);
+                if (h.length() == 1) hex.append('0');
+                hex.append(h);
+            }
+            return hex.toString();
+        } catch (Exception e) {
+            return s;
         }
     }
 

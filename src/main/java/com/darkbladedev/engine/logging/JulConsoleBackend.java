@@ -18,7 +18,7 @@ public final class JulConsoleBackend implements LogBackend {
 
     @Override
     public void publish(LogEntry entry) {
-        String formatted = LogFormatter.format(entry);
+        String formatted = LogFormatter.format(entry, false);
         Level julLevel = toJulLevel(entry.level());
         if (entry.throwable() != null && entry.includeStacktrace()) {
             logger.log(julLevel, formatted, entry.throwable());

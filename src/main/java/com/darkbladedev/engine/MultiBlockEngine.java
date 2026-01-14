@@ -153,7 +153,7 @@ public class MultiBlockEngine extends JavaPlugin {
         addonManager.loadAddons();
 
         ensureDefaultLangFiles();
-        //ensureDefaultMultiblockFiles();
+        ensureDefaultMultiblockFiles();
         i18n.reload();
         
         // Ensure directory exists
@@ -357,7 +357,8 @@ public class MultiBlockEngine extends JavaPlugin {
                         "lore", List.of(
                                 "&eClick derecho: &aEnsamblar multibloque",
                                 "&eClick izquierdo: &cDesensamblar multibloque",
-                                "&eShift + Click derecho: &bMostrar información"
+                                "&eShift + Click derecho: &bMostrar información",
+                                "&eShift + Click izquierdo: &dCambiar variante"
                         )
                 );
             }

@@ -222,6 +222,15 @@ public final class DefaultWrenchDispatcher implements WrenchDispatcher {
                 playInspect(player, block.getLocation());
                 return WrenchResult.handled(true);
             }
+            if (action == org.bukkit.event.block.Action.LEFT_CLICK_BLOCK && player.isSneaking() && isAnchorBlock(block, instance)) {
+                Optional<MultiblockInstance> switched = manager.switchVariant(instance, player);
+                if (switched.isPresent()) {
+                    playSuccess(player, block.getLocation());
+                } else {
+                    playFailure(player, block.getLocation());
+                }
+                return WrenchResult.handled(true);
+            }
             if (action == org.bukkit.event.block.Action.LEFT_CLICK_BLOCK && isAnchorBlock(block, instance)) {
                 boolean destroyed = disassemble(player, instance);
                 if (destroyed) {

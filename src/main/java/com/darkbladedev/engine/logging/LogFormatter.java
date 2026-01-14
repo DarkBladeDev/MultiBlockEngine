@@ -11,10 +11,17 @@ final class LogFormatter {
     }
 
     static String format(LogEntry entry) {
+        return format(entry, true);
+    }
+
+    static String format(LogEntry entry, boolean includeEngine) {
         StringBuilder sb = new StringBuilder();
 
-        sb.append('[').append(entry.engine()).append(']')
-            .append('[').append(entry.scope().label()).append(']')
+        if (includeEngine) {
+            sb.append('[').append(entry.engine()).append(']');
+        }
+
+        sb.append('[').append(entry.scope().label()).append(']')
             .append('[').append(entry.phase().name()).append(']')
             .append('[').append(entry.level().name()).append(']')
             .append(' ')
@@ -68,4 +75,3 @@ final class LogFormatter {
         return true;
     }
 }
-
