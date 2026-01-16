@@ -12,6 +12,14 @@ import com.darkbladedev.engine.api.logging.LogKv;
 import com.darkbladedev.engine.api.logging.LogLevel;
 import com.darkbladedev.engine.api.logging.LogPhase;
 import com.darkbladedev.engine.api.logging.LogScope;
+import com.darkbladedev.engine.api.inspection.EntryType;
+import com.darkbladedev.engine.api.inspection.Inspectable;
+import com.darkbladedev.engine.api.inspection.InspectionData;
+import com.darkbladedev.engine.api.inspection.InspectionEntry;
+import com.darkbladedev.engine.api.inspection.InspectionLevel;
+import com.darkbladedev.engine.api.inspection.InspectionPipelineService;
+import com.darkbladedev.engine.api.inspection.InspectionRenderer;
+import com.darkbladedev.engine.api.inspection.InteractionSource;
 import com.darkbladedev.engine.api.wrench.WrenchContext;
 import com.darkbladedev.engine.api.wrench.WrenchDispatcher;
 import com.darkbladedev.engine.api.wrench.WrenchInteractable;
@@ -318,21 +326,88 @@ public final class DefaultWrenchDispatcher implements WrenchDispatcher {
         if (player == null) {
             return;
         }
-        send(player, MSG_INSPECT_TITLE, Map.of());
-        send(player, MSG_INSPECT_TYPE, Map.of("type", safe(instance.type().id())));
-        send(player, MSG_INSPECT_STATE, Map.of("state", instance.state() == null ? "" : instance.state().name()));
-        send(player, MSG_INSPECT_FACING, Map.of("facing", instance.facing() == null ? "" : instance.facing().name()));
-        Location loc = instance.anchorLocation();
-        String anchor = loc == null ? "" : (loc.getWorld() != null ? loc.getWorld().getName() : "") + ":" + loc.getBlockX() + "," + loc.getBlockY() + "," + loc.getBlockZ();
-        send(player, MSG_INSPECT_ANCHOR, Map.of("anchor", anchor));
 
-        List<String> components = describeRequiredComponents(instance.type());
-        if (!components.isEmpty()) {
-            send(player, MSG_INSPECT_COMPONENTS, Map.of());
-            for (String line : components) {
-                player.sendMessage(Component.text("- " + line, NamedTextColor.GRAY));
+        InspectionPipelineService pipeline = null;
+        try {
+            MultiBlockEngine plugin = MultiBlockEngine.getInstance();
+            if (plugin != null && plugin.getAddonManager() != null) {
+                pipeline = plugin.getAddonManager().getCoreService(InspectionPipelineService.class);
             }
+        } catch (Throwable ignored) {
         }
+
+        if (pipeline == null) {
+            send(player, MSG_INSPECT_TITLE, Map.of());
+            send(player, MSG_INSPECT_TYPE, Map.of("type", safe(instance.type().id())));
+            send(player, MSG_INSPECT_STATE, Map.of("state", instance.state() == null ? "" : instance.state().name()));
+            send(player, MSG_INSPECT_FACING, Map.of("facing", instance.facing() == null ? "" : instance.facing().name()));
+            Location loc = instance.anchorLocation();
+            String anchor = loc == null ? "" : (loc.getWorld() != null ? loc.getWorld().getName() : "") + ":" + loc.getBlockX() + "," + loc.getBlockY() + "," + loc.getBlockZ();
+            send(player, MSG_INSPECT_ANCHOR, Map.of("anchor", anchor));
+
+            List<String> components = describeRequiredComponents(instance.type());
+            if (!components.isEmpty()) {
+                send(player, MSG_INSPECT_COMPONENTS, Map.of());
+                for (String line : components) {
+                    player.sendMessage(Component.text("- " + line, NamedTextColor.GRAY));
+                }
+            }
+            return;
+        }
+
+        Inspectable inspectable = ctx -> {
+            Map<String, InspectionEntry> out = new LinkedHashMap<>();
+
+            out.put("type", new InspectionEntry("type", safe(instance.type().id()), EntryType.TEXT, InspectionLevel.PLAYER));
+            out.put("state", new InspectionEntry("state", instance.state() == null ? "" : instance.state().name(), EntryType.TEXT, InspectionLevel.PLAYER));
+            out.put("facing", new InspectionEntry("facing", instance.facing() == null ? "" : instance.facing().name(), EntryType.TEXT, InspectionLevel.PLAYER));
+
+            Location loc = instance.anchorLocation();
+            String anchor = loc == null ? "" : (loc.getWorld() != null ? loc.getWorld().getName() : "") + ":" + loc.getBlockX() + "," + loc.getBlockY() + "," + loc.getBlockZ();
+            out.put("anchor", new InspectionEntry("anchor", anchor, EntryType.TEXT, InspectionLevel.PLAYER));
+
+            List<String> components = describeRequiredComponents(instance.type());
+            if (!components.isEmpty()) {
+                out.put("components", new InspectionEntry("components", List.copyOf(components), EntryType.TEXT, InspectionLevel.PLAYER));
+            }
+
+            return new InspectionData(Map.copyOf(out));
+        };
+
+        InspectionRenderer renderer = (p, data, ctx) -> {
+            send(p, MSG_INSPECT_TITLE, Map.of());
+
+            InspectionEntry type = data.entries().get("type");
+            if (type != null) {
+                send(p, MSG_INSPECT_TYPE, Map.of("type", safe(String.valueOf(type.value()))));
+            }
+
+            InspectionEntry state = data.entries().get("state");
+            if (state != null) {
+                send(p, MSG_INSPECT_STATE, Map.of("state", safe(String.valueOf(state.value()))));
+            }
+
+            InspectionEntry facing = data.entries().get("facing");
+            if (facing != null) {
+                send(p, MSG_INSPECT_FACING, Map.of("facing", safe(String.valueOf(facing.value()))));
+            }
+
+            InspectionEntry anchor = data.entries().get("anchor");
+            if (anchor != null) {
+                send(p, MSG_INSPECT_ANCHOR, Map.of("anchor", safe(String.valueOf(anchor.value()))));
+            }
+
+            InspectionEntry comps = data.entries().get("components");
+            if (comps != null && comps.value() instanceof List<?> list && !list.isEmpty()) {
+                send(p, MSG_INSPECT_COMPONENTS, Map.of());
+                for (Object line : list) {
+                    if (line == null) continue;
+                    p.sendMessage(Component.text("- " + line, NamedTextColor.GRAY));
+                }
+            }
+        };
+
+        pipeline.inspect(player, InteractionSource.WRENCH, inspectable, renderer);
     }
 
     private List<String> describeRequiredComponents(MultiblockType type) {

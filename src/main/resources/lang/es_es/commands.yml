@@ -1,7 +1,7 @@
 commands:
   usage:
-    console: "Uso: /{label} <inspect|reload|status|debug|report|services>"
-    player: "Uso: /{label} <inspect|reload|status|debug|report|services>"
+    console: "Uso: /{label} <help|status|report|admin|debug>"
+    player: "Uso: /{label} <help|inspect|assemble|disassemble|status|report|admin|debug>"
   error:
     unknown_subcommand: "Subcomando desconocido. Usa /mbe para ver ayuda."
   debug:

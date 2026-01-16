@@ -110,23 +110,68 @@ public class MultiblockManager {
     }
     
     public void reloadTypes(Collection<MultiblockType> newTypes) {
+        Map<String, MultiblockType> runtimeTypes = new LinkedHashMap<>();
+        Map<String, MultiblockSource> runtimeSources = new LinkedHashMap<>();
+        for (Map.Entry<String, MultiblockType> e : types.entrySet()) {
+            String id = e.getKey();
+            MultiblockSource src = sourcesByTypeId.get(id);
+            if (src != null && "<runtime>".equals(src.path())) {
+                runtimeTypes.put(id, e.getValue());
+                runtimeSources.put(id, src);
+            }
+        }
+
         types.clear();
         sourcesByTypeId.clear();
         variantsBySignature.clear();
+
         for (MultiblockType type : newTypes) {
+            if (type == null) {
+                continue;
+            }
+            if (runtimeTypes.containsKey(type.id())) {
+                continue;
+            }
             registerType(type);
+        }
+
+        for (Map.Entry<String, MultiblockType> e : runtimeTypes.entrySet()) {
+            MultiblockSource src = runtimeSources.get(e.getKey());
+            registerType(e.getValue(), src);
         }
     }
 
     public void reloadTypesWithSources(Collection<MultiblockType> newTypes, Map<String, MultiblockSource> sources) {
+        Map<String, MultiblockType> runtimeTypes = new LinkedHashMap<>();
+        Map<String, MultiblockSource> runtimeSources = new LinkedHashMap<>();
+        for (Map.Entry<String, MultiblockType> e : types.entrySet()) {
+            String id = e.getKey();
+            MultiblockSource src = sourcesByTypeId.get(id);
+            if (src != null && "<runtime>".equals(src.path())) {
+                runtimeTypes.put(id, e.getValue());
+                runtimeSources.put(id, src);
+            }
+        }
+
         types.clear();
         sourcesByTypeId.clear();
         variantsBySignature.clear();
 
         Map<String, MultiblockSource> src = sources == null ? Map.of() : sources;
         for (MultiblockType type : newTypes) {
-            MultiblockSource source = type == null ? null : src.get(type.id());
+            if (type == null) {
+                continue;
+            }
+            if (runtimeTypes.containsKey(type.id())) {
+                continue;
+            }
+            MultiblockSource source = src.get(type.id());
             registerType(type, source);
+        }
+
+        for (Map.Entry<String, MultiblockType> e : runtimeTypes.entrySet()) {
+            MultiblockSource source = runtimeSources.get(e.getKey());
+            registerType(e.getValue(), source);
         }
     }
 

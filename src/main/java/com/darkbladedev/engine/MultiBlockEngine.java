@@ -12,6 +12,8 @@ import com.darkbladedev.engine.api.item.ItemDefinition;
 import com.darkbladedev.engine.api.item.ItemKeys;
 import com.darkbladedev.engine.api.i18n.I18nService;
 import com.darkbladedev.engine.api.i18n.LocaleProvider;
+import com.darkbladedev.engine.api.inspection.InspectionPipelineService;
+import com.darkbladedev.engine.api.port.PortResolutionService;
 import com.darkbladedev.engine.api.wrench.WrenchDispatcher;
 import com.darkbladedev.engine.api.persistence.PersistentStorageService;
 import com.darkbladedev.engine.api.storage.StorageExceptionHandler;
@@ -30,7 +32,9 @@ import com.darkbladedev.engine.logging.LoggingManager;
 import com.darkbladedev.engine.item.bridge.PdcItemStackBridge;
 import com.darkbladedev.engine.item.bridge.ItemStackBridge;
 import com.darkbladedev.engine.item.DefaultItemService;
+import com.darkbladedev.engine.port.DefaultPortResolutionService;
 import com.darkbladedev.engine.wrench.DefaultWrenchDispatcher;
+import com.darkbladedev.engine.inspection.DefaultInspectionPipelineService;
 import com.darkbladedev.engine.api.export.ExportHookRegistry;
 import com.darkbladedev.engine.export.DefaultExportHookRegistry;
 import com.darkbladedev.engine.export.ExportConfig;
@@ -156,6 +160,10 @@ public class MultiBlockEngine extends JavaPlugin {
         );
         addonManager.registerCoreService(LocaleProvider.class, localeProvider);
         addonManager.registerCoreService(I18nService.class, i18n);
+
+        addonManager.registerCoreService(InspectionPipelineService.class, new DefaultInspectionPipelineService());
+
+        addonManager.registerCoreService(PortResolutionService.class, new DefaultPortResolutionService());
 
         DefaultAssemblyTriggerRegistry triggerRegistry = new DefaultAssemblyTriggerRegistry();
         BuiltinAssemblyTriggers.registerAll(triggerRegistry);

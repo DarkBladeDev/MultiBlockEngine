@@ -7,6 +7,9 @@ import com.darkbladedev.engine.api.logging.LogLevel;
 import com.darkbladedev.engine.api.logging.LogPhase;
 import com.darkbladedev.engine.api.logging.LogScope;
 import com.darkbladedev.engine.api.assembly.AssemblyTriggerType;
+import com.darkbladedev.engine.api.port.PortBlockRef;
+import com.darkbladedev.engine.api.port.PortDefinition;
+import com.darkbladedev.engine.api.port.PortDirection;
 import com.darkbladedev.engine.model.BlockMatcher;
 import com.darkbladedev.engine.model.DisplayNameConfig;
 import com.darkbladedev.engine.model.MultiblockInstance;
@@ -473,6 +476,9 @@ public class MultiblockParser {
         if (config.isConfigurationSection("variables")) {
             defaultVariables = config.getConfigurationSection("variables").getValues(false);
         }
+
+        Map<String, PortDefinition> ports = parsePorts(config, id);
+        Map<String, Object> extensions = parseExtensions(config);
         
         // Parse Actions
         List<Action> onCreateActions = parseActions(config, "actions.on_create");
@@ -496,7 +502,291 @@ public class MultiblockParser {
         
         int tickInterval = config.getInt("tick_interval", 20);
         
-        return new MultiblockType(id, version, assemblyTrigger, new Vector(0, 0, 0), controllerMatcher, pattern, true, behaviorConfig, defaultVariables, onCreateActions, onTickActions, onInteractActions, onBreakActions, displayName, tickInterval);
+        return new MultiblockType(id, version, assemblyTrigger, new Vector(0, 0, 0), controllerMatcher, pattern, true, behaviorConfig, defaultVariables, ports, extensions, onCreateActions, onTickActions, onInteractActions, onBreakActions, displayName, tickInterval);
+    }
+
+    private Map<String, PortDefinition> parsePorts(YamlConfiguration config, String multiblockId) {
+        Map<String, PortDefinition> out = new LinkedHashMap<>();
+
+        if (config.contains("ports")) {
+            if (!config.isConfigurationSection("ports")) {
+                throw new IllegalArgumentException("'ports' debe ser un map (id=" + multiblockId + ")");
+            }
+
+            ConfigurationSection portsSection = config.getConfigurationSection("ports");
+            if (portsSection == null) {
+                return Map.of();
+            }
+
+            for (String portId : portsSection.getKeys(false)) {
+                if (portId == null || portId.isBlank()) {
+                    continue;
+                }
+                if (!portsSection.isConfigurationSection(portId)) {
+                    throw new IllegalArgumentException("Port debe ser un map: ports." + portId + " (id=" + multiblockId + ")");
+                }
+                ConfigurationSection sec = portsSection.getConfigurationSection(portId);
+                if (sec == null) {
+                    continue;
+                }
+
+                String directionRaw = sec.getString("direction");
+                PortDirection direction = parsePortDirection(directionRaw, multiblockId, portId);
+
+                String type = sec.getString("type");
+                if (type == null || type.isBlank()) {
+                    throw new IllegalArgumentException("Port 'type' vacío: ports." + portId + ".type (id=" + multiblockId + ")");
+                }
+
+                Object blockObj = sec.get("block");
+                if (blockObj == null) {
+                    throw new IllegalArgumentException("Port sin 'block': ports." + portId + ".block (id=" + multiblockId + ")");
+                }
+                PortBlockRef block = parsePortBlockRef(blockObj, multiblockId, portId);
+
+                Set<String> caps = parseStringSet(sec.get("capabilities"));
+                out.put(portId, new PortDefinition(portId, direction, type.trim(), block, caps));
+            }
+
+            return out.isEmpty() ? Map.of() : Map.copyOf(out);
+        }
+
+        out.putAll(parseLegacyInputsOutputs(config, multiblockId));
+        out.putAll(parseLegacyRoles(config, multiblockId));
+
+        return out.isEmpty() ? Map.of() : Map.copyOf(out);
+    }
+
+    private Map<String, PortDefinition> parseLegacyInputsOutputs(YamlConfiguration config, String multiblockId) {
+        Map<String, PortDefinition> out = new LinkedHashMap<>();
+
+        if (config.isConfigurationSection("inputs")) {
+            ConfigurationSection inputs = config.getConfigurationSection("inputs");
+            if (inputs != null) {
+                for (String key : inputs.getKeys(false)) {
+                    if (key == null || key.isBlank()) {
+                        continue;
+                    }
+                    String portId = "input_" + key.trim().toLowerCase(Locale.ROOT);
+                    PortDefinition def = parseLegacyPortEntry(inputs.get(key), multiblockId, "inputs." + key, portId, PortDirection.INPUT, key, Set.of("accept"));
+                    if (def != null) {
+                        out.putIfAbsent(def.id(), def);
+                    }
+                }
+            }
+        }
+
+        if (config.isConfigurationSection("outputs")) {
+            ConfigurationSection outputs = config.getConfigurationSection("outputs");
+            if (outputs != null) {
+                for (String key : outputs.getKeys(false)) {
+                    if (key == null || key.isBlank()) {
+                        continue;
+                    }
+                    String portId = "output_" + key.trim().toLowerCase(Locale.ROOT);
+                    PortDefinition def = parseLegacyPortEntry(outputs.get(key), multiblockId, "outputs." + key, portId, PortDirection.OUTPUT, key, Set.of("emit"));
+                    if (def != null) {
+                        out.putIfAbsent(def.id(), def);
+                    }
+                }
+            }
+        }
+
+        return out;
+    }
+
+    private PortDefinition parseLegacyPortEntry(Object obj, String multiblockId, String path, String portId, PortDirection direction, String typeFallback, Set<String> defaultCaps) {
+        if (obj == null) {
+            return null;
+        }
+        if (obj instanceof String s) {
+            PortBlockRef block = parsePortBlockRef(s, multiblockId, portId);
+            return new PortDefinition(portId, direction, typeFallback == null ? "data" : typeFallback.trim(), block, defaultCaps);
+        }
+        if (obj instanceof Map<?, ?> map) {
+            Object blockObj = map.get("block");
+            if (blockObj == null) {
+                throw new IllegalArgumentException("Legacy port sin 'block': " + path + " (id=" + multiblockId + ")");
+            }
+            String type = map.containsKey("type") ? String.valueOf(map.get("type")) : typeFallback;
+            if (type == null || type.isBlank()) {
+                type = "data";
+            }
+            Set<String> caps = map.containsKey("capabilities") ? parseStringSet(map.get("capabilities")) : defaultCaps;
+            PortBlockRef block = parsePortBlockRef(blockObj, multiblockId, portId);
+            return new PortDefinition(portId, direction, type.trim(), block, caps);
+        }
+        if (obj instanceof ConfigurationSection cs) {
+            Object blockObj = cs.get("block");
+            if (blockObj == null) {
+                throw new IllegalArgumentException("Legacy port sin 'block': " + path + ".block (id=" + multiblockId + ")");
+            }
+            String type = cs.getString("type", typeFallback);
+            if (type == null || type.isBlank()) {
+                type = "data";
+            }
+            Set<String> caps = cs.contains("capabilities") ? parseStringSet(cs.get("capabilities")) : defaultCaps;
+            PortBlockRef block = parsePortBlockRef(blockObj, multiblockId, portId);
+            return new PortDefinition(portId, direction, type.trim(), block, caps);
+        }
+        throw new IllegalArgumentException("Legacy port inválido: " + path + " (id=" + multiblockId + ")");
+    }
+
+    private Map<String, PortDefinition> parseLegacyRoles(YamlConfiguration config, String multiblockId) {
+        if (!config.isConfigurationSection("roles")) {
+            return Map.of();
+        }
+        ConfigurationSection roles = config.getConfigurationSection("roles");
+        if (roles == null) {
+            return Map.of();
+        }
+
+        List<PortDefinition> defs = new ArrayList<>();
+        defs.addAll(parseLegacyRoleOffsetPorts(roles.get("input"), multiblockId, PortDirection.INPUT, "accept", "port_in_"));
+        defs.addAll(parseLegacyRoleOffsetPorts(roles.get("output"), multiblockId, PortDirection.OUTPUT, "emit", "port_out_"));
+
+        if (defs.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<String, PortDefinition> out = new LinkedHashMap<>();
+        for (PortDefinition def : defs) {
+            if (def == null) {
+                continue;
+            }
+            out.putIfAbsent(def.id(), def);
+        }
+        return out;
+    }
+
+    private List<PortDefinition> parseLegacyRoleOffsetPorts(Object obj, String multiblockId, PortDirection direction, String cap, String idPrefix) {
+        if (!(obj instanceof List<?> list)) {
+            return List.of();
+        }
+        List<PortDefinition> out = new ArrayList<>();
+        int idx = 0;
+        for (Object e : list) {
+            if (!(e instanceof List<?> vec) || vec.size() < 3) {
+                continue;
+            }
+            int dx = ((Number) vec.get(0)).intValue();
+            int dy = ((Number) vec.get(1)).intValue();
+            int dz = ((Number) vec.get(2)).intValue();
+            PortBlockRef block = (dx == 0 && dy == 0 && dz == 0) ? new PortBlockRef.Controller() : new PortBlockRef.Offset(dx, dy, dz);
+            idx++;
+            String portId = idPrefix + idx;
+            out.add(new PortDefinition(portId, direction, "data", block, Set.of(cap)));
+        }
+        return out;
+    }
+
+    private Map<String, Object> parseExtensions(YamlConfiguration config) {
+        if (!config.contains("extensions")) {
+            return Map.of();
+        }
+        if (!config.isConfigurationSection("extensions")) {
+            throw new IllegalArgumentException("'extensions' debe ser un map");
+        }
+        ConfigurationSection section = config.getConfigurationSection("extensions");
+        if (section == null) {
+            return Map.of();
+        }
+        return Map.copyOf(sectionToMap(section));
+    }
+
+    private Map<String, Object> sectionToMap(ConfigurationSection section) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (String key : section.getKeys(false)) {
+            if (key == null || key.isBlank()) {
+                continue;
+            }
+            Object v = section.get(key);
+            if (v instanceof ConfigurationSection cs) {
+                out.put(key, Map.copyOf(sectionToMap(cs)));
+            } else {
+                out.put(key, v);
+            }
+        }
+        return out;
+    }
+
+    private PortDirection parsePortDirection(String raw, String multiblockId, String portId) {
+        if (raw == null || raw.isBlank()) {
+            throw new IllegalArgumentException("Port sin 'direction': ports." + portId + ".direction (id=" + multiblockId + ")");
+        }
+        String v = raw.trim().toLowerCase(Locale.ROOT);
+        return switch (v) {
+            case "input", "in" -> PortDirection.INPUT;
+            case "output", "out" -> PortDirection.OUTPUT;
+            default -> throw new IllegalArgumentException("Port 'direction' inválido: " + raw + " (ports." + portId + ", id=" + multiblockId + ")");
+        };
+    }
+
+    private PortBlockRef parsePortBlockRef(Object obj, String multiblockId, String portId) {
+        if (obj instanceof String s) {
+            String v = s.trim().toLowerCase(Locale.ROOT);
+            return switch (v) {
+                case "controller" -> new PortBlockRef.Controller();
+                case "north" -> new PortBlockRef.Offset(0, 0, -1);
+                case "south" -> new PortBlockRef.Offset(0, 0, 1);
+                case "east" -> new PortBlockRef.Offset(1, 0, 0);
+                case "west" -> new PortBlockRef.Offset(-1, 0, 0);
+                case "up" -> new PortBlockRef.Offset(0, 1, 0);
+                case "down" -> new PortBlockRef.Offset(0, -1, 0);
+                default -> throw new IllegalArgumentException("Port 'block' inválido: " + s + " (ports." + portId + ", id=" + multiblockId + ")");
+            };
+        }
+        if (obj instanceof List<?> list) {
+            if (list.size() < 3) {
+                throw new IllegalArgumentException("Port 'block' offset inválido: " + obj + " (ports." + portId + ", id=" + multiblockId + ")");
+            }
+            int dx = ((Number) list.get(0)).intValue();
+            int dy = ((Number) list.get(1)).intValue();
+            int dz = ((Number) list.get(2)).intValue();
+            if (dx == 0 && dy == 0 && dz == 0) {
+                return new PortBlockRef.Controller();
+            }
+            return new PortBlockRef.Offset(dx, dy, dz);
+        }
+        if (obj instanceof ConfigurationSection cs) {
+            if (cs.isList("offset")) {
+                return parsePortBlockRef(cs.getList("offset"), multiblockId, portId);
+            }
+            if (cs.contains("dx") && cs.contains("dy") && cs.contains("dz")) {
+                int dx = cs.getInt("dx");
+                int dy = cs.getInt("dy");
+                int dz = cs.getInt("dz");
+                if (dx == 0 && dy == 0 && dz == 0) {
+                    return new PortBlockRef.Controller();
+                }
+                return new PortBlockRef.Offset(dx, dy, dz);
+            }
+        }
+        throw new IllegalArgumentException("Port 'block' inválido: " + obj + " (ports." + portId + ", id=" + multiblockId + ")");
+    }
+
+    private Set<String> parseStringSet(Object obj) {
+        if (obj == null) {
+            return Set.of();
+        }
+        if (obj instanceof String s) {
+            String t = s.trim();
+            return t.isEmpty() ? Set.of() : Set.of(t);
+        }
+        if (obj instanceof List<?> list) {
+            Set<String> out = new LinkedHashSet<>();
+            for (Object e : list) {
+                if (e == null) {
+                    continue;
+                }
+                String t = String.valueOf(e).trim();
+                if (!t.isEmpty()) {
+                    out.add(t);
+                }
+            }
+            return Set.copyOf(out);
+        }
+        return Set.of(String.valueOf(obj).trim());
     }
     
     private List<Action> parseActions(YamlConfiguration config, String path) {

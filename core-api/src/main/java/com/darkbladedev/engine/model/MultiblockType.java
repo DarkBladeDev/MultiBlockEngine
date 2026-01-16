@@ -2,6 +2,7 @@ package com.darkbladedev.engine.model;
 
 import com.darkbladedev.engine.api.capability.Capability;
 import com.darkbladedev.engine.api.assembly.AssemblyTriggerType;
+import com.darkbladedev.engine.api.port.PortDefinition;
 import com.darkbladedev.engine.model.action.Action;
 import org.bukkit.util.Vector;
 
@@ -20,6 +21,8 @@ public record MultiblockType(
     boolean persistent,
     Map<String, Object> behaviorConfig,
     Map<String, Object> defaultVariables,
+    Map<String, PortDefinition> ports,
+    Map<String, Object> extensions,
     List<Action> onCreateActions,
     List<Action> onTickActions,
     List<Action> onInteractActions,
@@ -34,6 +37,8 @@ public record MultiblockType(
         pattern = Collections.unmodifiableList(pattern);
         behaviorConfig = behaviorConfig != null ? Collections.unmodifiableMap(behaviorConfig) : Map.of();
         defaultVariables = defaultVariables != null ? Collections.unmodifiableMap(defaultVariables) : Map.of();
+        ports = ports != null ? Collections.unmodifiableMap(ports) : Map.of();
+        extensions = extensions != null ? Collections.unmodifiableMap(extensions) : Map.of();
         onCreateActions = onCreateActions != null ? Collections.unmodifiableList(onCreateActions) : List.of();
         onTickActions = onTickActions != null ? Collections.unmodifiableList(onTickActions) : List.of();
         onInteractActions = onInteractActions != null ? Collections.unmodifiableList(onInteractActions) : List.of();
@@ -43,15 +48,19 @@ public record MultiblockType(
     }
     
     // Constructor for YAML parser (no capabilities)
+    public MultiblockType(String id, String version, String assemblyTrigger, Vector controllerOffset, BlockMatcher controllerMatcher, List<PatternEntry> pattern, boolean persistent, Map<String, Object> behaviorConfig, Map<String, Object> defaultVariables, Map<String, PortDefinition> ports, Map<String, Object> extensions, List<Action> onCreateActions, List<Action> onTickActions, List<Action> onInteractActions, List<Action> onBreakActions, DisplayNameConfig displayName, int tickInterval) {
+        this(id, version, assemblyTrigger, controllerOffset, controllerMatcher, pattern, persistent, behaviorConfig, defaultVariables, ports, extensions, onCreateActions, onTickActions, onInteractActions, onBreakActions, displayName, tickInterval, List.of());
+    }
+
     public MultiblockType(String id, String version, String assemblyTrigger, Vector controllerOffset, BlockMatcher controllerMatcher, List<PatternEntry> pattern, boolean persistent, Map<String, Object> behaviorConfig, Map<String, Object> defaultVariables, List<Action> onCreateActions, List<Action> onTickActions, List<Action> onInteractActions, List<Action> onBreakActions, DisplayNameConfig displayName, int tickInterval) {
-        this(id, version, assemblyTrigger, controllerOffset, controllerMatcher, pattern, persistent, behaviorConfig, defaultVariables, onCreateActions, onTickActions, onInteractActions, onBreakActions, displayName, tickInterval, List.of());
+        this(id, version, assemblyTrigger, controllerOffset, controllerMatcher, pattern, persistent, behaviorConfig, defaultVariables, Map.of(), Map.of(), onCreateActions, onTickActions, onInteractActions, onBreakActions, displayName, tickInterval, List.of());
     }
 
     public MultiblockType(String id, String version, Vector controllerOffset, BlockMatcher controllerMatcher, List<PatternEntry> pattern, boolean persistent, Map<String, Object> behaviorConfig, Map<String, Object> defaultVariables, List<Action> onCreateActions, List<Action> onTickActions, List<Action> onInteractActions, List<Action> onBreakActions, DisplayNameConfig displayName, int tickInterval, List<CapabilityFactory> capabilityFactories) {
-        this(id, version, AssemblyTriggerType.WRENCH_USE.id(), controllerOffset, controllerMatcher, pattern, persistent, behaviorConfig, defaultVariables, onCreateActions, onTickActions, onInteractActions, onBreakActions, displayName, tickInterval, capabilityFactories);
+        this(id, version, AssemblyTriggerType.WRENCH_USE.id(), controllerOffset, controllerMatcher, pattern, persistent, behaviorConfig, defaultVariables, Map.of(), Map.of(), onCreateActions, onTickActions, onInteractActions, onBreakActions, displayName, tickInterval, capabilityFactories);
     }
 
     public MultiblockType(String id, String version, Vector controllerOffset, BlockMatcher controllerMatcher, List<PatternEntry> pattern, boolean persistent, Map<String, Object> behaviorConfig, Map<String, Object> defaultVariables, List<Action> onCreateActions, List<Action> onTickActions, List<Action> onInteractActions, List<Action> onBreakActions, DisplayNameConfig displayName, int tickInterval) {
-        this(id, version, AssemblyTriggerType.WRENCH_USE.id(), controllerOffset, controllerMatcher, pattern, persistent, behaviorConfig, defaultVariables, onCreateActions, onTickActions, onInteractActions, onBreakActions, displayName, tickInterval, List.of());
+        this(id, version, AssemblyTriggerType.WRENCH_USE.id(), controllerOffset, controllerMatcher, pattern, persistent, behaviorConfig, defaultVariables, Map.of(), Map.of(), onCreateActions, onTickActions, onInteractActions, onBreakActions, displayName, tickInterval, List.of());
     }
 }

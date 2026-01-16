@@ -36,6 +36,71 @@ public final class ServicesCommandRouter {
         registry.register(service);
     }
 
+    public List<String> serviceIds() {
+        return mergedIds();
+    }
+
+    public Optional<MbeCommandService> resolve(String idOrAlias) {
+        return resolveService(idOrAlias);
+    }
+
+    public boolean dispatch(CommandSender sender, String label, String serviceId, String mode, List<String> args) {
+        Objects.requireNonNull(sender, "sender");
+        String sid = serviceId == null ? "" : serviceId.trim();
+        if (sid.isEmpty()) {
+            sendError(sender, "Servicio no especificado", List.of("Usa: /" + label + " services list"));
+            return true;
+        }
+
+        Optional<MbeCommandService> svcOpt = resolveService(sid);
+        if (svcOpt.isEmpty()) {
+            sendError(sender, "Servicio no encontrado: " + sid, List.of("Usa: /" + label + " services list"));
+            return true;
+        }
+
+        MbeCommandService svc = svcOpt.get();
+        ServiceCallParser.CallMode m = "info".equalsIgnoreCase(mode)
+                ? ServiceCallParser.CallMode.INFO
+                : ServiceCallParser.CallMode.EXECUTE;
+
+        List<String> safeArgs = args == null ? List.of() : List.copyOf(args);
+        try {
+            if (m == ServiceCallParser.CallMode.INFO) {
+                svc.info(sender, safeArgs);
+                audit(sender, label, svc, m, safeArgs, true, null);
+            } else {
+                svc.execute(sender, safeArgs);
+                audit(sender, label, svc, m, safeArgs, true, null);
+            }
+        } catch (Throwable t) {
+            audit(sender, label, svc, m, safeArgs, false, t);
+            sendError(sender, "Fallo ejecutando el servicio: " + svc.id(), List.of("Revisa consola para detalles."));
+        }
+        return true;
+    }
+
+    public List<String> tabCompleteService(CommandSender sender, String serviceId, String mode, List<String> args) {
+        Objects.requireNonNull(sender, "sender");
+        Optional<MbeCommandService> svcOpt = resolveService(serviceId);
+        if (svcOpt.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<String> remaining = args == null ? List.of() : args;
+        List<String> suggestions;
+        try {
+            suggestions = svcOpt.get().tabComplete(sender, mode, remaining);
+        } catch (Throwable ignored) {
+            suggestions = List.of();
+        }
+        String last = remaining.isEmpty() ? "" : remaining.get(remaining.size() - 1);
+        return filter(suggestions, last);
+    }
+
+    public void sendServicesListPublic(CommandSender sender) {
+        sendServicesList(sender);
+    }
+
     public boolean handle(CommandSender sender, String label, String[] args) {
         Objects.requireNonNull(sender, "sender");
         String[] safeArgs = args == null ? new String[0] : args;

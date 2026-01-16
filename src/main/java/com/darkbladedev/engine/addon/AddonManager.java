@@ -280,6 +280,9 @@ public class AddonManager {
     }
 
     public AddonState getState(String addonId) {
+        if (CORE_PROVIDER_ID.equals(addonId)) {
+            return AddonState.ENABLED;
+        }
         return states.getOrDefault(addonId, AddonState.DISABLED);
     }
 

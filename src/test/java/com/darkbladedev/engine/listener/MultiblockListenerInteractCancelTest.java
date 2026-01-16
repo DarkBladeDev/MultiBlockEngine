@@ -10,6 +10,10 @@ import com.darkbladedev.engine.api.item.ItemInstance;
 import com.darkbladedev.engine.api.item.ItemKey;
 import com.darkbladedev.engine.api.item.ItemKeys;
 import com.darkbladedev.engine.api.item.ItemService;
+import com.darkbladedev.engine.api.port.PortBlockRef;
+import com.darkbladedev.engine.api.port.PortDefinition;
+import com.darkbladedev.engine.api.port.PortDirection;
+import com.darkbladedev.engine.api.port.PortResolutionService;
 import com.darkbladedev.engine.api.wrench.WrenchDispatcher;
 import com.darkbladedev.engine.item.DefaultItemService;
 import com.darkbladedev.engine.item.bridge.PdcItemStackBridge;
@@ -19,6 +23,7 @@ import com.darkbladedev.engine.model.DisplayNameConfig;
 import com.darkbladedev.engine.model.MultiblockInstance;
 import com.darkbladedev.engine.model.MultiblockType;
 import com.darkbladedev.engine.model.PatternEntry;
+import com.darkbladedev.engine.model.MultiblockSource;
 import com.darkbladedev.engine.model.action.Action;
 import com.darkbladedev.engine.api.assembly.AssemblyTriggerType;
 import com.darkbladedev.engine.wrench.DefaultWrenchDispatcher;
@@ -41,6 +46,7 @@ import java.io.File;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -304,6 +310,82 @@ public class MultiblockListenerInteractCancelTest {
         listener.onInteract(interactEvent);
 
         assertTrue(interactEvent.isCancelled());
+    }
+
+    @Test
+    void portResolutionServiceResolvesOffsetsUsingInstanceFacing() {
+        MultiBlockEngine plugin = MockBukkit.load(MultiBlockEngine.class);
+
+        PortResolutionService svc = plugin.getAddonManager().getCoreService(PortResolutionService.class);
+        assertNotNull(svc);
+
+        Map<String, PortDefinition> ports = Map.of(
+                "p",
+                new PortDefinition("p", PortDirection.INPUT, "energy", new PortBlockRef.Offset(1, 0, 0), Set.of("accept"))
+        );
+
+        MultiblockType type = new MultiblockType(
+                "test:ports",
+                "1.0",
+                AssemblyTriggerType.WRENCH_USE.id(),
+                new Vector(0, 0, 0),
+                block -> true,
+                List.of(),
+                false,
+                Map.of(),
+                Map.of(),
+                ports,
+                Map.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                new DisplayNameConfig("", false, "hologram"),
+                20
+        );
+
+        Location controller = new Location(world, 0, 64, 0);
+        MultiblockInstance north = new MultiblockInstance(type, controller, BlockFace.NORTH);
+        MultiblockInstance east = new MultiblockInstance(type, controller, BlockFace.EAST);
+        MultiblockInstance south = new MultiblockInstance(type, controller, BlockFace.SOUTH);
+        MultiblockInstance west = new MultiblockInstance(type, controller, BlockFace.WEST);
+
+        assertEquals(new Location(world, 1, 64, 0), svc.resolvePort(north, "p").orElseThrow());
+        assertEquals(new Location(world, 0, 64, 1), svc.resolvePort(east, "p").orElseThrow());
+        assertEquals(new Location(world, -1, 64, 0), svc.resolvePort(south, "p").orElseThrow());
+        assertEquals(new Location(world, 0, 64, -1), svc.resolvePort(west, "p").orElseThrow());
+
+        assertEquals(controller, svc.resolveBlock(north, new PortBlockRef.Controller()).orElseThrow());
+    }
+
+    @Test
+    void reloadDoesNotDropRuntimeTypes() {
+        MultiBlockEngine plugin = MockBukkit.load(MultiBlockEngine.class);
+
+        MultiblockType runtimeType = new MultiblockType(
+                "addon:test_runtime",
+                "1.0",
+                new Vector(0, 0, 0),
+                block -> true,
+                List.of(),
+                false,
+                Map.of(),
+                Map.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                new DisplayNameConfig("", false, "hologram"),
+                20,
+                List.of()
+        );
+
+        plugin.getManager().registerType(runtimeType, new MultiblockSource(MultiblockSource.Type.USER_DEFINED, "<runtime>"));
+        assertTrue(plugin.getManager().getType("addon:test_runtime").isPresent());
+
+        plugin.getManager().reloadTypesWithSources(List.of(), Map.of());
+
+        assertTrue(plugin.getManager().getType("addon:test_runtime").isPresent());
     }
 
     @Test

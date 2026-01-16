@@ -5,6 +5,8 @@ import com.darkbladedev.engine.api.logging.CoreLogger;
 import com.darkbladedev.engine.api.logging.LogBackend;
 import com.darkbladedev.engine.api.logging.LogLevel;
 import com.darkbladedev.engine.api.logging.LoggingConfig;
+import com.darkbladedev.engine.api.port.PortBlockRef;
+import com.darkbladedev.engine.api.port.PortDirection;
 import com.darkbladedev.engine.model.MultiblockSource;
 import com.darkbladedev.engine.model.MultiblockType;
 import org.junit.jupiter.api.Test;
@@ -128,6 +130,124 @@ final class MultiblockParserNestedFoldersTest {
         assertEquals("custom_machine", type.id());
     }
 
+    @Test
+    void parsesPortsAndExtensions() throws Exception {
+        Path multiblocks = tempDir.resolve("multiblocks");
+        Files.createDirectories(multiblocks.resolve("custom"));
+
+        writeYaml(multiblocks.resolve("custom").resolve("with_ports.yml"), """
+                id: with_ports
+                version: "1.0"
+                controller: IRON_BLOCK
+                pattern: []
+                ports:
+                  energy_in:
+                    direction: input
+                    type: energy
+                    block: controller
+                    capabilities: [accept]
+                  item_out:
+                    direction: output
+                    type: item
+                    block: [1, 0, 0]
+                    capabilities:
+                      - emit
+                extensions:
+                  mbe-electricity:
+                    storage:
+                      capacity: 10000
+                      voltage: 220
+                """);
+
+        MultiblockParser parser = new MultiblockParser(new MultiblockAPIImpl(), testLogger());
+        var loaded = parser.loadAllWithSources(multiblocks.toFile());
+        assertEquals(1, loaded.size());
+
+        MultiblockType type = loaded.get(0).type();
+        assertEquals("with_ports", type.id());
+        assertEquals(2, type.ports().size());
+
+        var in = type.ports().get("energy_in");
+        assertNotNull(in);
+        assertEquals(PortDirection.INPUT, in.direction());
+        assertEquals("energy", in.type());
+        assertTrue(in.block() instanceof PortBlockRef.Controller);
+        assertTrue(in.capabilities().contains("accept"));
+
+        var out = type.ports().get("item_out");
+        assertNotNull(out);
+        assertEquals(PortDirection.OUTPUT, out.direction());
+        assertEquals("item", out.type());
+        assertTrue(out.block() instanceof PortBlockRef.Offset);
+        PortBlockRef.Offset off = (PortBlockRef.Offset) out.block();
+        assertEquals(1, off.dx());
+        assertEquals(0, off.dy());
+        assertEquals(0, off.dz());
+
+        assertTrue(type.extensions().containsKey("mbe-electricity"));
+    }
+
+    @Test
+    void parsesLegacyRolesAsPorts() throws Exception {
+        Path multiblocks = tempDir.resolve("multiblocks");
+        Files.createDirectories(multiblocks.resolve("custom"));
+
+        writeYaml(multiblocks.resolve("custom").resolve("legacy_roles.yml"), """
+                id: legacy_roles
+                version: "1.0"
+                controller: IRON_BLOCK
+                pattern: []
+                roles:
+                  input:
+                    - [1, 0, 0]
+                  output:
+                    - [0, 0, 1]
+                    - [0, 1, 0]
+                """);
+
+        MultiblockParser parser = new MultiblockParser(new MultiblockAPIImpl(), testLogger());
+        var loaded = parser.loadAllWithSources(multiblocks.toFile());
+        assertEquals(1, loaded.size());
+
+        MultiblockType type = loaded.get(0).type();
+        assertEquals("legacy_roles", type.id());
+        assertEquals(3, type.ports().size());
+
+        assertTrue(type.ports().containsKey("port_in_1"));
+        assertTrue(type.ports().containsKey("port_out_1"));
+        assertTrue(type.ports().containsKey("port_out_2"));
+    }
+
+    @Test
+    void parsesLegacyInputsOutputsAsPorts() throws Exception {
+        Path multiblocks = tempDir.resolve("multiblocks");
+        Files.createDirectories(multiblocks.resolve("custom"));
+
+        writeYaml(multiblocks.resolve("custom").resolve("legacy_io.yml"), """
+                id: legacy_io
+                version: "1.0"
+                controller: IRON_BLOCK
+                pattern: []
+                inputs:
+                  energy:
+                    block: controller
+                outputs:
+                  items:
+                    block: [1, 0, 0]
+                """);
+
+        MultiblockParser parser = new MultiblockParser(new MultiblockAPIImpl(), testLogger());
+        var loaded = parser.loadAllWithSources(multiblocks.toFile());
+        assertEquals(1, loaded.size());
+
+        MultiblockType type = loaded.get(0).type();
+        assertEquals("legacy_io", type.id());
+        assertEquals(2, type.ports().size());
+
+        assertTrue(type.ports().containsKey("input_energy"));
+        assertTrue(type.ports().containsKey("output_items"));
+    }
+
     private static void writeYaml(Path file, String content) throws Exception {
         Files.createDirectories(file.getParent());
         Files.writeString(file, content.replace("\r\n", "\n"), StandardCharsets.UTF_8);
@@ -140,4 +260,3 @@ final class MultiblockParserNestedFoldersTest {
         return new CoreLogger("Test", backend, cfg);
     }
 }
-

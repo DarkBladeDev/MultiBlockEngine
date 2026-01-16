@@ -9,10 +9,17 @@ public interface EnergyStorage extends EnergyNode {
 
     long discharge(long amount);
 
+    default long insert(long amount) {
+        return charge(amount);
+    }
+
+    default long extract(long amount) {
+        return discharge(amount);
+    }
+
     default void onCharged(long amount) {
     }
 
     default void onDischarged(long amount) {
     }
 }
-

@@ -110,6 +110,8 @@ public class MultiblockBuilder {
             true, // persistent by default
             new HashMap<>(), // behaviorConfig
             defaultVariables,
+            Map.of(),
+            Map.of(),
             onCreateActions,
             onTickActions,
             onInteractActions,

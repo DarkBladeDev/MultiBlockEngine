@@ -12,6 +12,14 @@ import com.darkbladedev.engine.export.ExportSession;
 import com.darkbladedev.engine.export.SelectionManager;
 import com.darkbladedev.engine.export.StructureExporter;
 import com.darkbladedev.engine.api.assembly.AssemblyReport;
+import com.darkbladedev.engine.api.inspection.EntryType;
+import com.darkbladedev.engine.api.inspection.Inspectable;
+import com.darkbladedev.engine.api.inspection.InspectionData;
+import com.darkbladedev.engine.api.inspection.InspectionEntry;
+import com.darkbladedev.engine.api.inspection.InspectionLevel;
+import com.darkbladedev.engine.api.inspection.InspectionPipelineService;
+import com.darkbladedev.engine.api.inspection.InspectionRenderer;
+import com.darkbladedev.engine.api.inspection.InteractionSource;
 import com.darkbladedev.engine.model.MultiblockInstance;
 import com.darkbladedev.engine.model.MultiblockType;
 import com.darkbladedev.engine.model.PatternEntry;
@@ -39,6 +47,15 @@ import java.util.Optional;
 public class MultiblockCommand implements CommandExecutor, TabCompleter {
 
     private static final String ORIGIN = "mbe";
+
+    private static final String PERM_USE = "multiblockengine.use";
+    private static final String PERM_ADMIN = "multiblockengine.admin";
+    private static final String PERM_DEBUG = "multiblockengine.debug";
+    private static final String PERM_ADMIN_RELOAD = "multiblockengine.admin.reload";
+    private static final String PERM_ADMIN_EXPORT = "multiblockengine.admin.export";
+    private static final String PERM_ADMIN_SERVICES = "multiblockengine.admin.services";
+    private static final String PERM_DEBUG_SESSION = "multiblockengine.debug.session";
+    private static final String PERM_DEBUG_SERVICES = "multiblockengine.debug.services";
 
     private static final MessageKey MSG_USAGE_CONSOLE = MessageKey.of(ORIGIN, "commands.usage.console");
     private static final MessageKey MSG_USAGE_PLAYER = MessageKey.of(ORIGIN, "commands.usage.player");
@@ -89,43 +106,240 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         String[] safeArgs = args == null ? new String[0] : args;
-        if (safeArgs.length > 0 && safeArgs[0].equalsIgnoreCase("services")) {
+
+        if (!sender.hasPermission(PERM_USE) && !(sender instanceof org.bukkit.command.ConsoleCommandSender)) {
+            sender.sendMessage(Component.text("No tienes permiso.", NamedTextColor.RED));
+            return true;
+        }
+
+        if (safeArgs.length == 0 || safeArgs[0].equalsIgnoreCase("help")) {
+            sendHelp(sender, label);
+            return true;
+        }
+
+        String root = safeArgs[0] == null ? "" : safeArgs[0].toLowerCase(Locale.ROOT);
+
+        if (root.equals("services")) {
+            if (!sender.hasPermission(PERM_ADMIN_SERVICES) && !sender.hasPermission(PERM_ADMIN)) {
+                sender.sendMessage(Component.text("No tienes permiso.", NamedTextColor.RED));
+                return true;
+            }
             return services.handle(sender, label, safeArgs);
         }
 
-        if (!(sender instanceof Player player)) {
-            sender.sendMessage(Component.text(tr(sender, MSG_USAGE_CONSOLE, "label", label), NamedTextColor.YELLOW));
+        if (root.equals("admin")) {
+            if (!sender.hasPermission(PERM_ADMIN)) {
+                sender.sendMessage(Component.text("No tienes permiso.", NamedTextColor.RED));
+                return true;
+            }
+            return handleAdmin(sender, label, safeArgs);
+        }
+
+        if (root.equals("debug")) {
+            if (!sender.hasPermission(PERM_DEBUG)) {
+                sender.sendMessage(Component.text("No tienes permiso.", NamedTextColor.RED));
+                return true;
+            }
+            return handleDebugLayer(sender, label, safeArgs);
+        }
+
+        if (root.equals("inspect")) {
+            if (!(sender instanceof Player player)) {
+                sender.sendMessage(Component.text("Este comando solo puede usarlo un jugador.", NamedTextColor.RED));
+                return true;
+            }
+            handleInspect(player, safeArgs);
             return true;
         }
 
-        if (safeArgs.length == 0) {
-            player.sendMessage(Component.text(tr(player, MSG_USAGE_PLAYER, "label", label), NamedTextColor.YELLOW));
+        if (root.equals("status") || root.equals("stats")) {
+            handleStatus(sender);
             return true;
         }
 
-        if (safeArgs[0].equalsIgnoreCase("inspect")) {
-            handleInspect(player);
+        if (root.equals("report")) {
+            handleReport(sender, safeArgs);
             return true;
-        } else if (safeArgs[0].equalsIgnoreCase("export")) {
+        }
+
+        if (root.equals("assemble") || root.equals("form")) {
+            if (!(sender instanceof Player player)) {
+                sender.sendMessage(Component.text("Este comando solo puede usarlo un jugador.", NamedTextColor.RED));
+                return true;
+            }
+            handleAssemble(player);
+            return true;
+        }
+
+        if (root.equals("disassemble") || root.equals("break")) {
+            if (!(sender instanceof Player player)) {
+                sender.sendMessage(Component.text("Este comando solo puede usarlo un jugador.", NamedTextColor.RED));
+                return true;
+            }
+            handleDisassemble(player);
+            return true;
+        }
+
+        if (root.equals("reload")) {
+            if (!sender.hasPermission(PERM_ADMIN_RELOAD) && !sender.hasPermission(PERM_ADMIN)) {
+                sender.sendMessage(Component.text("No tienes permiso.", NamedTextColor.RED));
+                return true;
+            }
+            handleReload(sender);
+            return true;
+        }
+
+        if (root.equals("export")) {
+            if (!sender.hasPermission(PERM_ADMIN_EXPORT) && !sender.hasPermission(PERM_ADMIN)) {
+                sender.sendMessage(Component.text("No tienes permiso.", NamedTextColor.RED));
+                return true;
+            }
+            if (!(sender instanceof Player player)) {
+                sender.sendMessage(Component.text("Este comando solo puede usarlo un jugador.", NamedTextColor.RED));
+                return true;
+            }
             handleExport(player, label, safeArgs);
             return true;
-        } else if (safeArgs[0].equalsIgnoreCase("status") || safeArgs[0].equalsIgnoreCase("stats")) {
-            handleStatus(player);
-            return true;
-        } else if (safeArgs[0].equalsIgnoreCase("reload")) {
-            handleReload(player);
-            return true;
-        } else if (safeArgs[0].equalsIgnoreCase("debug")) {
-            handleDebug(player, safeArgs);
-            return true;
-        } else if (safeArgs[0].equalsIgnoreCase("report")) {
-            handleReport(player, safeArgs);
+        }
+
+        sender.sendMessage(Component.text(tr(sender, MSG_UNKNOWN_SUBCOMMAND), NamedTextColor.RED));
+        sendHelp(sender, label);
+        return true;
+    }
+
+    private boolean handleAdmin(CommandSender sender, String label, String[] args) {
+        if (args.length < 2) {
+            sender.sendMessage(Component.text("Uso: /" + label + " admin <reload|export|services|<servicio>>", NamedTextColor.YELLOW));
             return true;
         }
 
-        player.sendMessage(Component.text(tr(player, MSG_UNKNOWN_SUBCOMMAND), NamedTextColor.RED));
-        return true;
+        String op = args[1] == null ? "" : args[1].toLowerCase(Locale.ROOT);
+        if (op.equals("reload")) {
+            if (!sender.hasPermission(PERM_ADMIN_RELOAD) && !sender.hasPermission(PERM_ADMIN)) {
+                sender.sendMessage(Component.text("No tienes permiso.", NamedTextColor.RED));
+                return true;
+            }
+            handleReload(sender);
+            return true;
+        }
+
+        if (op.equals("export")) {
+            if (!sender.hasPermission(PERM_ADMIN_EXPORT) && !sender.hasPermission(PERM_ADMIN)) {
+                sender.sendMessage(Component.text("No tienes permiso.", NamedTextColor.RED));
+                return true;
+            }
+            if (!(sender instanceof Player player)) {
+                sender.sendMessage(Component.text("Este comando solo puede usarlo un jugador.", NamedTextColor.RED));
+                return true;
+            }
+            String[] forwarded = new String[Math.max(1, args.length - 1)];
+            forwarded[0] = "export";
+            if (args.length > 2) {
+                System.arraycopy(args, 2, forwarded, 1, args.length - 2);
+            }
+            handleExport(player, label, forwarded);
+            return true;
+        }
+
+        if (op.equals("services") || op.equals("service") || op.equals("list")) {
+            if (!sender.hasPermission(PERM_ADMIN_SERVICES) && !sender.hasPermission(PERM_ADMIN)) {
+                sender.sendMessage(Component.text("No tienes permiso.", NamedTextColor.RED));
+                return true;
+            }
+            services.sendServicesListPublic(sender);
+            return true;
+        }
+
+        if (!sender.hasPermission(PERM_ADMIN_SERVICES) && !sender.hasPermission(PERM_ADMIN)) {
+            sender.sendMessage(Component.text("No tienes permiso.", NamedTextColor.RED));
+            return true;
+        }
+
+        if (args.length >= 3 && "info".equalsIgnoreCase(args[2])) {
+            List<String> remaining = args.length <= 3 ? List.of() : java.util.Arrays.asList(java.util.Arrays.copyOfRange(args, 3, args.length));
+            return services.dispatch(sender, label, op, "info", remaining);
+        }
+
+        List<String> remaining = args.length <= 2 ? List.of() : java.util.Arrays.asList(java.util.Arrays.copyOfRange(args, 2, args.length));
+        return services.dispatch(sender, label, op, "execute", remaining);
     }
+
+    private boolean handleDebugLayer(CommandSender sender, String label, String[] args) {
+        if (args.length < 2) {
+            sender.sendMessage(Component.text("Uso: /" + label + " debug <type|list|<servicio>>", NamedTextColor.YELLOW));
+            return true;
+        }
+
+        String op = args[1] == null ? "" : args[1].toLowerCase(Locale.ROOT);
+        if (op.equals("list") || op.equals("services") || op.equals("service")) {
+            if (!sender.hasPermission(PERM_DEBUG_SERVICES) && !sender.hasPermission(PERM_DEBUG)) {
+                sender.sendMessage(Component.text("No tienes permiso.", NamedTextColor.RED));
+                return true;
+            }
+            services.sendServicesListPublic(sender);
+            return true;
+        }
+
+        if (op.equals("type")) {
+            if (!sender.hasPermission(PERM_DEBUG_SESSION) && !sender.hasPermission(PERM_DEBUG)) {
+                sender.sendMessage(Component.text("No tienes permiso.", NamedTextColor.RED));
+                return true;
+            }
+            if (!(sender instanceof Player player)) {
+                sender.sendMessage(Component.text("Este comando solo puede usarlo un jugador.", NamedTextColor.RED));
+                return true;
+            }
+            String[] forwarded = new String[Math.max(1, args.length - 1)];
+            forwarded[0] = "debug";
+            if (args.length > 2) {
+                System.arraycopy(args, 2, forwarded, 1, args.length - 2);
+            }
+            handleDebug(player, forwarded);
+            return true;
+        }
+
+        if (sender.hasPermission(PERM_DEBUG_SESSION) && sender instanceof Player player) {
+            if (plugin.getManager().getType(op).isPresent()) {
+                handleDebug(player, args);
+                return true;
+            }
+        }
+
+        if (!sender.hasPermission(PERM_DEBUG_SERVICES) && !sender.hasPermission(PERM_DEBUG)) {
+            sender.sendMessage(Component.text("No tienes permiso.", NamedTextColor.RED));
+            return true;
+        }
+
+        if (args.length >= 3 && "info".equalsIgnoreCase(args[2])) {
+            List<String> remaining = args.length <= 3 ? List.of() : java.util.Arrays.asList(java.util.Arrays.copyOfRange(args, 3, args.length));
+            return services.dispatch(sender, label, op, "info", remaining);
+        }
+
+        List<String> remaining = args.length <= 2 ? List.of() : java.util.Arrays.asList(java.util.Arrays.copyOfRange(args, 2, args.length));
+        return services.dispatch(sender, label, op, "execute", remaining);
+    }
+
+    private void sendHelp(CommandSender sender, String label) {
+        sender.sendMessage(Component.text("/" + label + " inspect", NamedTextColor.YELLOW));
+        sender.sendMessage(Component.text("/" + label + " assemble", NamedTextColor.YELLOW));
+        sender.sendMessage(Component.text("/" + label + " disassemble", NamedTextColor.YELLOW));
+        sender.sendMessage(Component.text("/" + label + " status", NamedTextColor.YELLOW));
+        sender.sendMessage(Component.text("/" + label + " report [jugador]", NamedTextColor.YELLOW));
+
+        if (sender.hasPermission(PERM_ADMIN)) {
+            sender.sendMessage(Component.text("/" + label + " admin reload", NamedTextColor.GRAY));
+            sender.sendMessage(Component.text("/" + label + " admin export <start|pos1|pos2|mark|save|cancel>", NamedTextColor.GRAY));
+            sender.sendMessage(Component.text("/" + label + " admin services", NamedTextColor.GRAY));
+            sender.sendMessage(Component.text("/" + label + " admin <servicio> [info] <args>", NamedTextColor.GRAY));
+        }
+        if (sender.hasPermission(PERM_DEBUG)) {
+            sender.sendMessage(Component.text("/" + label + " debug type <typeId> [jugador]", NamedTextColor.DARK_GRAY));
+            sender.sendMessage(Component.text("/" + label + " debug <servicio> [info] <args>", NamedTextColor.DARK_GRAY));
+            sender.sendMessage(Component.text("/" + label + " debug list", NamedTextColor.DARK_GRAY));
+        }
+    }
+
+    
 
     private void handleExport(Player player, String label, String[] args) {
         if (args.length < 2) {
@@ -247,39 +461,41 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
         plugin.getDebugManager().startSession(targetPlayer, type, targetBlock.getLocation());
     }
 
-    private void handleReport(Player player, String[] args) {
-        Player target = player;
-        if (args.length >= 2) {
+    private void handleReport(CommandSender sender, String[] args) {
+        Player target;
+        if (args.length >= 2 && args[1] != null && !args[1].isBlank()) {
             target = org.bukkit.Bukkit.getPlayer(args[1]);
             if (target == null) {
-                player.sendMessage(Component.text(tr(player, MSG_REPORT_PLAYER_NOT_FOUND, "player", args[1]), NamedTextColor.RED));
+                sender.sendMessage(Component.text(tr(sender, MSG_REPORT_PLAYER_NOT_FOUND, "player", args[1]), NamedTextColor.RED));
                 return;
             }
+        } else if (sender instanceof Player p) {
+            target = p;
+        } else {
+            sender.sendMessage(Component.text(tr(sender, MSG_REPORT_PLAYER_NOT_FOUND, "player", "<jugador>"), NamedTextColor.RED));
+            return;
         }
 
         if (plugin.getAssemblyCoordinator() == null) {
-            player.sendMessage(Component.text(tr(player, MSG_REPORT_NONE), NamedTextColor.YELLOW));
+            sender.sendMessage(Component.text(tr(sender, MSG_REPORT_NONE), NamedTextColor.YELLOW));
             return;
         }
 
-        AssemblyReport report = plugin.getAssemblyCoordinator()
-                .lastReport(target.getUniqueId())
-                .orElse(null);
-
+        AssemblyReport report = plugin.getAssemblyCoordinator().lastReport(target.getUniqueId()).orElse(null);
         if (report == null) {
-            player.sendMessage(Component.text(tr(player, MSG_REPORT_NONE), NamedTextColor.YELLOW));
+            sender.sendMessage(Component.text(tr(sender, MSG_REPORT_NONE), NamedTextColor.YELLOW));
             return;
         }
 
-        player.sendMessage(Component.text(tr(player, MSG_REPORT_TITLE), NamedTextColor.AQUA));
-        player.sendMessage(Component.text(tr(player, MSG_REPORT_RESULT, "result", report.result().name()), NamedTextColor.GRAY));
-        player.sendMessage(Component.text(tr(player, MSG_REPORT_TRIGGER, "trigger", report.trigger()), NamedTextColor.GRAY));
-        player.sendMessage(Component.text(tr(player, MSG_REPORT_MULTIBLOCK, "multiblock", report.multiblockId()), NamedTextColor.GRAY));
-        player.sendMessage(Component.text(tr(player, MSG_REPORT_REASON, "reason", report.failureReason()), NamedTextColor.GRAY));
+        sender.sendMessage(Component.text(tr(sender, MSG_REPORT_TITLE), NamedTextColor.AQUA));
+        sender.sendMessage(Component.text(tr(sender, MSG_REPORT_RESULT, "result", report.result().name()), NamedTextColor.GRAY));
+        sender.sendMessage(Component.text(tr(sender, MSG_REPORT_TRIGGER, "trigger", report.trigger()), NamedTextColor.GRAY));
+        sender.sendMessage(Component.text(tr(sender, MSG_REPORT_MULTIBLOCK, "multiblock", report.multiblockId()), NamedTextColor.GRAY));
+        sender.sendMessage(Component.text(tr(sender, MSG_REPORT_REASON, "reason", report.failureReason()), NamedTextColor.GRAY));
     }
 
-    private void handleReload(Player player) {
-        player.sendMessage(Component.text(tr(player, MSG_RELOAD_START), NamedTextColor.YELLOW));
+    private void handleReload(CommandSender sender) {
+        sender.sendMessage(Component.text(tr(sender, MSG_RELOAD_START), NamedTextColor.YELLOW));
         
         // Reload Config
         plugin.reloadConfig();
@@ -312,38 +528,109 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
         // Restart ticking with new config
         plugin.getManager().startTicking(plugin);
         
-        player.sendMessage(Component.text(tr(player, MSG_RELOAD_DONE_TYPES, "count", newTypes.size()), NamedTextColor.GREEN));
-        player.sendMessage(Component.text(tr(player, MSG_RELOAD_DONE_RESTART), NamedTextColor.GREEN));
+        sender.sendMessage(Component.text(tr(sender, MSG_RELOAD_DONE_TYPES, "count", newTypes.size()), NamedTextColor.GREEN));
+        sender.sendMessage(Component.text(tr(sender, MSG_RELOAD_DONE_RESTART), NamedTextColor.GREEN));
     }
     
-    private void handleStatus(Player player) {
+    private void handleStatus(CommandSender sender) {
         MultiblockManager manager = plugin.getManager();
         MetricsManager metrics = manager.getMetrics();
         
-        player.sendMessage(Component.text(tr(player, MSG_STATUS_TITLE), NamedTextColor.BLUE));
-        player.sendMessage(Component.textOfChildren(
-                Component.text(tr(player, MSG_STATUS_LOADED_TYPES), NamedTextColor.GRAY),
+        sender.sendMessage(Component.text(tr(sender, MSG_STATUS_TITLE), NamedTextColor.BLUE));
+        sender.sendMessage(Component.textOfChildren(
+                Component.text(tr(sender, MSG_STATUS_LOADED_TYPES), NamedTextColor.GRAY),
                 Component.text(String.valueOf(manager.getTypes().size()), NamedTextColor.WHITE)
         ));
-        player.sendMessage(Component.textOfChildren(
-                Component.text(tr(player, MSG_STATUS_TOTAL_CREATED), NamedTextColor.GRAY),
+        sender.sendMessage(Component.textOfChildren(
+                Component.text(tr(sender, MSG_STATUS_TOTAL_CREATED), NamedTextColor.GRAY),
                 Component.text(String.valueOf(metrics.getCreatedInstances()), NamedTextColor.WHITE)
         ));
-        player.sendMessage(Component.textOfChildren(
-                Component.text(tr(player, MSG_STATUS_TOTAL_DESTROYED), NamedTextColor.GRAY),
+        sender.sendMessage(Component.textOfChildren(
+                Component.text(tr(sender, MSG_STATUS_TOTAL_DESTROYED), NamedTextColor.GRAY),
                 Component.text(String.valueOf(metrics.getDestroyedInstances()), NamedTextColor.WHITE)
         ));
-        player.sendMessage(Component.textOfChildren(
-                Component.text(tr(player, MSG_STATUS_STRUCTURE_CHECKS), NamedTextColor.GRAY),
+        sender.sendMessage(Component.textOfChildren(
+                Component.text(tr(sender, MSG_STATUS_STRUCTURE_CHECKS), NamedTextColor.GRAY),
                 Component.text(String.valueOf(metrics.getStructureChecks()), NamedTextColor.WHITE)
         ));
-        player.sendMessage(Component.textOfChildren(
-                Component.text(tr(player, MSG_STATUS_AVG_TICK), NamedTextColor.GRAY),
+        sender.sendMessage(Component.textOfChildren(
+                Component.text(tr(sender, MSG_STATUS_AVG_TICK), NamedTextColor.GRAY),
                 Component.text(String.format("%.4f ms", metrics.getAverageTickTimeMs()), NamedTextColor.WHITE)
         ));
     }
 
-    private void handleInspect(Player player) {
+    private void handleAssemble(Player player) {
+        if (plugin.getAssemblyCoordinator() == null) {
+            player.sendMessage(Component.text("AssemblyCoordinator no disponible.", NamedTextColor.RED));
+            return;
+        }
+
+        Block target = player.getTargetBlockExact(5);
+        if (target == null) {
+            player.sendMessage(Component.text("Debes mirar un bloque.", NamedTextColor.RED));
+            return;
+        }
+
+        com.darkbladedev.engine.api.assembly.AssemblyContext ctx = new com.darkbladedev.engine.api.assembly.AssemblyContext(
+                com.darkbladedev.engine.api.assembly.AssemblyContext.Cause.MANUAL,
+                player,
+                target,
+                null,
+                null,
+                null,
+                player.isSneaking(),
+                java.util.Map.of("command", true)
+        );
+
+        AssemblyReport report = plugin.getAssemblyCoordinator().tryAssembleAt(target, ctx);
+        if (report == null) {
+            player.sendMessage(Component.text("No se pudo intentar el ensamblado.", NamedTextColor.RED));
+            return;
+        }
+
+        if (report.result() == AssemblyReport.Result.SUCCESS) {
+            player.sendMessage(Component.text("Ensamblado OK: " + report.multiblockId(), NamedTextColor.GREEN));
+        } else {
+            String reason = report.failureReason() == null || report.failureReason().isBlank() ? report.result().name() : report.failureReason();
+            player.sendMessage(Component.text("Ensamblado falló: " + reason, NamedTextColor.RED));
+        }
+    }
+
+    private void handleDisassemble(Player player) {
+        Block target = player.getTargetBlockExact(5);
+        if (target == null) {
+            player.sendMessage(Component.text("Debes mirar un bloque.", NamedTextColor.RED));
+            return;
+        }
+
+        Optional<MultiblockInstance> instanceOpt = plugin.getManager().getInstanceAt(target.getLocation());
+        if (instanceOpt.isEmpty()) {
+            player.sendMessage(Component.text("No hay ninguna estructura aquí.", NamedTextColor.YELLOW));
+            return;
+        }
+
+        MultiblockInstance instance = instanceOpt.get();
+        com.darkbladedev.engine.api.event.MultiblockBreakEvent mbEvent = new com.darkbladedev.engine.api.event.MultiblockBreakEvent(instance, player);
+        org.bukkit.Bukkit.getPluginManager().callEvent(mbEvent);
+        if (mbEvent.isCancelled()) {
+            player.sendMessage(Component.text("Acción cancelada.", NamedTextColor.RED));
+            return;
+        }
+
+        for (com.darkbladedev.engine.model.action.Action a : instance.type().onBreakActions()) {
+            try {
+                if (a != null) {
+                    a.execute(instance, player);
+                }
+            } catch (Throwable t) {
+                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Break action failed: " + (a == null ? "<null>" : a.getClass().getSimpleName()), t);
+            }
+        }
+        plugin.getManager().destroyInstance(instance);
+        player.sendMessage(Component.text("Estructura desensamblada.", NamedTextColor.GREEN));
+    }
+
+    private void handleInspect(Player player, String[] args) {
         Block target = player.getTargetBlockExact(5);
         if (target == null) {
             player.sendMessage(Component.text(tr(player, MSG_INSPECT_MUST_LOOK_AT_BLOCK), NamedTextColor.RED));
@@ -359,23 +646,98 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
         }
 
         MultiblockInstance instance = instanceOpt.get();
-        player.sendMessage(Component.text(tr(player, MSG_INSPECT_TITLE), NamedTextColor.GREEN));
-        player.sendMessage(Component.textOfChildren(
-                Component.text(tr(player, MSG_INSPECT_TYPE), NamedTextColor.GOLD),
-                Component.text(instance.type().id(), NamedTextColor.WHITE)
-        ));
-        player.sendMessage(Component.textOfChildren(
-                Component.text(tr(player, MSG_INSPECT_STATE), NamedTextColor.GOLD),
-                Component.text(String.valueOf(instance.state()), NamedTextColor.WHITE)
-        ));
-        player.sendMessage(Component.textOfChildren(
-                Component.text(tr(player, MSG_INSPECT_FACING), NamedTextColor.GOLD),
-                Component.text(String.valueOf(instance.facing()), NamedTextColor.WHITE)
-        ));
-        player.sendMessage(Component.textOfChildren(
-                Component.text(tr(player, MSG_INSPECT_ANCHOR), NamedTextColor.GOLD),
-                Component.text(formatLoc(instance.anchorLocation()), NamedTextColor.WHITE)
-        ));
+
+        InspectionLevel requestedLevel = null;
+        if (args != null && args.length >= 2 && args[1] != null) {
+            String s = args[1].trim().toLowerCase(Locale.ROOT);
+            if (!s.isBlank()) {
+                requestedLevel = switch (s) {
+                    case "player" -> InspectionLevel.PLAYER;
+                    case "operator", "op", "admin" -> InspectionLevel.OPERATOR;
+                    case "debug" -> InspectionLevel.DEBUG;
+                    case "internal" -> InspectionLevel.INTERNAL;
+                    default -> null;
+                };
+            }
+        }
+
+        if (requestedLevel == InspectionLevel.OPERATOR && !player.hasPermission("mbe.inspect.operator")) {
+            requestedLevel = InspectionLevel.PLAYER;
+        }
+        if (requestedLevel == InspectionLevel.DEBUG && !player.hasPermission("mbe.inspect.debug")) {
+            requestedLevel = InspectionLevel.PLAYER;
+        }
+        if (requestedLevel == InspectionLevel.INTERNAL && !player.hasPermission("mbe.inspect.internal")) {
+            requestedLevel = InspectionLevel.PLAYER;
+        }
+
+        InspectionPipelineService pipeline = plugin.getAddonManager().getCoreService(InspectionPipelineService.class);
+        if (pipeline != null) {
+            Inspectable inspectable = ctx -> {
+                java.util.Map<String, InspectionEntry> out = new java.util.LinkedHashMap<>();
+                out.put("type", new InspectionEntry("type", instance.type() == null ? "" : instance.type().id(), EntryType.TEXT, InspectionLevel.PLAYER));
+                out.put("state", new InspectionEntry("state", instance.state() == null ? "" : instance.state().name(), EntryType.TEXT, InspectionLevel.PLAYER));
+                out.put("facing", new InspectionEntry("facing", instance.facing() == null ? "" : instance.facing().name(), EntryType.TEXT, InspectionLevel.PLAYER));
+                out.put("anchor", new InspectionEntry("anchor", formatLoc(instance.anchorLocation()), EntryType.TEXT, InspectionLevel.PLAYER));
+                return new InspectionData(java.util.Map.copyOf(out));
+            };
+
+            InspectionRenderer renderer = (p, data, ctx) -> {
+                p.sendMessage(Component.text(tr(p, MSG_INSPECT_TITLE), NamedTextColor.GREEN));
+
+                InspectionEntry type = data.entries().get("type");
+                if (type != null) {
+                    p.sendMessage(Component.textOfChildren(
+                            Component.text(tr(p, MSG_INSPECT_TYPE), NamedTextColor.GOLD),
+                            Component.text(String.valueOf(type.value()), NamedTextColor.WHITE)
+                    ));
+                }
+
+                InspectionEntry state = data.entries().get("state");
+                if (state != null) {
+                    p.sendMessage(Component.textOfChildren(
+                            Component.text(tr(p, MSG_INSPECT_STATE), NamedTextColor.GOLD),
+                            Component.text(String.valueOf(state.value()), NamedTextColor.WHITE)
+                    ));
+                }
+
+                InspectionEntry facing = data.entries().get("facing");
+                if (facing != null) {
+                    p.sendMessage(Component.textOfChildren(
+                            Component.text(tr(p, MSG_INSPECT_FACING), NamedTextColor.GOLD),
+                            Component.text(String.valueOf(facing.value()), NamedTextColor.WHITE)
+                    ));
+                }
+
+                InspectionEntry anchor = data.entries().get("anchor");
+                if (anchor != null) {
+                    p.sendMessage(Component.textOfChildren(
+                            Component.text(tr(p, MSG_INSPECT_ANCHOR), NamedTextColor.GOLD),
+                            Component.text(String.valueOf(anchor.value()), NamedTextColor.WHITE)
+                    ));
+                }
+            };
+
+            pipeline.inspect(player, InteractionSource.COMMAND, requestedLevel, inspectable, renderer);
+        } else {
+            player.sendMessage(Component.text(tr(player, MSG_INSPECT_TITLE), NamedTextColor.GREEN));
+            player.sendMessage(Component.textOfChildren(
+                    Component.text(tr(player, MSG_INSPECT_TYPE), NamedTextColor.GOLD),
+                    Component.text(instance.type().id(), NamedTextColor.WHITE)
+            ));
+            player.sendMessage(Component.textOfChildren(
+                    Component.text(tr(player, MSG_INSPECT_STATE), NamedTextColor.GOLD),
+                    Component.text(String.valueOf(instance.state()), NamedTextColor.WHITE)
+            ));
+            player.sendMessage(Component.textOfChildren(
+                    Component.text(tr(player, MSG_INSPECT_FACING), NamedTextColor.GOLD),
+                    Component.text(String.valueOf(instance.facing()), NamedTextColor.WHITE)
+            ));
+            player.sendMessage(Component.textOfChildren(
+                    Component.text(tr(player, MSG_INSPECT_ANCHOR), NamedTextColor.GOLD),
+                    Component.text(formatLoc(instance.anchorLocation()), NamedTextColor.WHITE)
+            ));
+        }
         
         // Visualize
         highlightStructure(player, instance);
@@ -415,6 +777,9 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
     }
 
     private String formatLoc(Location loc) {
+        if (loc == null) {
+            return "";
+        }
         return loc.getBlockX() + ", " + loc.getBlockY() + ", " + loc.getBlockZ();
     }
     
@@ -436,40 +801,143 @@ public class MultiblockCommand implements CommandExecutor, TabCompleter {
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         String[] safeArgs = args == null ? new String[0] : args;
-        if (safeArgs.length > 0 && safeArgs[0].equalsIgnoreCase("services")) {
+
+        if (safeArgs.length > 0 && safeArgs[0] != null && safeArgs[0].equalsIgnoreCase("services")) {
             return services.tabComplete(sender, safeArgs);
         }
 
-        if (args.length == 1) {
-            List<String> subcommands = new ArrayList<>();
-            subcommands.add("inspect");
-            subcommands.add("export");
-            subcommands.add("reload");
-            subcommands.add("status");
-            subcommands.add("stats");
-            subcommands.add("debug");
-            subcommands.add("report");
-            subcommands.add("services");
-            
-            return filter(subcommands, args[0]);
-        } else if (args.length == 2 && args[0].equalsIgnoreCase("export")) {
-            return filter(List.of("start", "pos1", "pos2", "mark", "save", "cancel"), args[1]);
-        } else if (args.length == 3 && args[0].equalsIgnoreCase("export") && args[1].equalsIgnoreCase("mark")) {
-            return filter(List.of("controller", "input", "output", "decorative"), args[2]);
-        } else if (args.length == 2 && args[0].equalsIgnoreCase("debug")) {
-            // Autocomplete multiblock types
-            List<String> types = new ArrayList<>();
-            for (MultiblockType type : plugin.getManager().getTypes()) {
-                types.add(type.id());
+        if (safeArgs.length == 1) {
+            List<String> roots = new ArrayList<>();
+            roots.add("help");
+            roots.add("inspect");
+            roots.add("status");
+            roots.add("stats");
+            roots.add("report");
+            if (sender instanceof Player) {
+                roots.add("assemble");
+                roots.add("disassemble");
             }
-            return filter(types, args[1]);
-        } else if (args.length == 3 && args[0].equalsIgnoreCase("debug")) {
-            // Autocomplete players
-            return null; // Bukkit default player completion
-        } else if (args.length == 2 && args[0].equalsIgnoreCase("report")) {
-            return null;
+            if (sender.hasPermission(PERM_ADMIN_EXPORT) || sender.hasPermission(PERM_ADMIN)) {
+                roots.add("export");
+            }
+            if (sender.hasPermission(PERM_ADMIN_RELOAD) || sender.hasPermission(PERM_ADMIN)) {
+                roots.add("reload");
+            }
+            if (sender.hasPermission(PERM_ADMIN_SERVICES) || sender.hasPermission(PERM_ADMIN)) {
+                roots.add("services");
+                roots.add("admin");
+            }
+            if (sender.hasPermission(PERM_DEBUG)) {
+                roots.add("debug");
+            }
+            return filter(roots, safeArgs[0]);
         }
-        
+
+        String root = safeArgs[0] == null ? "" : safeArgs[0].toLowerCase(Locale.ROOT);
+
+        if (safeArgs.length == 2 && root.equals("inspect")) {
+            return filter(List.of("player", "operator", "debug", "internal"), safeArgs[1]);
+        }
+
+        if (root.equals("export")) {
+            if (safeArgs.length == 2) {
+                return filter(List.of("start", "pos1", "pos2", "mark", "save", "cancel"), safeArgs[1]);
+            }
+            if (safeArgs.length == 3 && "mark".equalsIgnoreCase(safeArgs[1])) {
+                return filter(List.of("controller", "input", "output", "decorative"), safeArgs[2]);
+            }
+        }
+
+        if (root.equals("admin")) {
+            if (safeArgs.length == 2) {
+                List<String> opts = new ArrayList<>();
+                opts.add("reload");
+                opts.add("export");
+                opts.add("services");
+                opts.addAll(services.serviceIds());
+                return filter(opts, safeArgs[1]);
+            }
+
+            if (safeArgs.length == 3) {
+                String op = safeArgs[1] == null ? "" : safeArgs[1].toLowerCase(Locale.ROOT);
+                if (op.equals("export")) {
+                    return filter(List.of("start", "pos1", "pos2", "mark", "save", "cancel"), safeArgs[2]);
+                }
+                if (op.equals("reload") || op.equals("services")) {
+                    return Collections.emptyList();
+                }
+                return filter(List.of("info"), safeArgs[2]);
+            }
+
+            if (safeArgs.length >= 4) {
+                String serviceId = safeArgs[1];
+                String maybeInfo = safeArgs[2];
+                if ("info".equalsIgnoreCase(maybeInfo)) {
+                    return Collections.emptyList();
+                }
+                List<String> remaining = java.util.Arrays.asList(java.util.Arrays.copyOfRange(safeArgs, 2, safeArgs.length));
+                String mode = remaining.size() >= 1 && "info".equalsIgnoreCase(remaining.get(0)) ? "info" : "execute";
+                List<String> argsTail = remaining.size() >= 1 && "info".equalsIgnoreCase(remaining.get(0))
+                        ? remaining.subList(1, remaining.size())
+                        : remaining;
+                return services.tabCompleteService(sender, serviceId, mode, argsTail);
+            }
+        }
+
+        if (root.equals("debug")) {
+            if (safeArgs.length == 2) {
+                List<String> opts = new ArrayList<>();
+                opts.add("type");
+                opts.add("list");
+                opts.addAll(services.serviceIds());
+                List<String> types = new ArrayList<>();
+                for (MultiblockType t : plugin.getManager().getTypes()) {
+                    if (t != null && t.id() != null) {
+                        types.add(t.id());
+                    }
+                }
+                opts.addAll(types);
+                return filter(opts, safeArgs[1]);
+            }
+
+            if (safeArgs.length == 3) {
+                String op = safeArgs[1] == null ? "" : safeArgs[1].toLowerCase(Locale.ROOT);
+                if (op.equals("type")) {
+                    List<String> types = new ArrayList<>();
+                    for (MultiblockType t : plugin.getManager().getTypes()) {
+                        if (t != null && t.id() != null) {
+                            types.add(t.id());
+                        }
+                    }
+                    return filter(types, safeArgs[2]);
+                }
+
+                if (op.equals("list")) {
+                    return Collections.emptyList();
+                }
+
+                return filter(List.of("info"), safeArgs[2]);
+            }
+
+            if (safeArgs.length == 4 && "type".equalsIgnoreCase(safeArgs[1])) {
+                return null;
+            }
+
+            if (safeArgs.length >= 4) {
+                String serviceId = safeArgs[1];
+                String maybeInfo = safeArgs[2];
+                if ("info".equalsIgnoreCase(maybeInfo)) {
+                    return Collections.emptyList();
+                }
+                List<String> remaining = java.util.Arrays.asList(java.util.Arrays.copyOfRange(safeArgs, 2, safeArgs.length));
+                String mode = remaining.size() >= 1 && "info".equalsIgnoreCase(remaining.get(0)) ? "info" : "execute";
+                List<String> argsTail = remaining.size() >= 1 && "info".equalsIgnoreCase(remaining.get(0))
+                        ? remaining.subList(1, remaining.size())
+                        : remaining;
+                return services.tabCompleteService(sender, serviceId, mode, argsTail);
+            }
+        }
+
         return Collections.emptyList();
     }
     
