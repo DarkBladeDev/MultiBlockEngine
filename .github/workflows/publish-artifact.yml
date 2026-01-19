@@ -32,12 +32,6 @@ jobs:
         env:
           RELEASE_VERSION: ${{ github.event.release.tag_name }}
 
-      - name: Publish
-        run: ./gradlew publish
-        env:
-          RELEASE_VERSION: ${{ github.event.release.tag_name }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Select release JAR
         id: jar
         shell: bash
@@ -72,3 +66,9 @@ jobs:
           tag_name: ${{ github.event.release.tag_name }}
           fail_on_unmatched_files: true
           files: ${{ steps.jar.outputs.path }}
+
+      - name: Publish
+        run: ./gradlew publish
+        env:
+          RELEASE_VERSION: ${{ github.event.release.tag_name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
