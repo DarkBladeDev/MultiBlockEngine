@@ -32,6 +32,29 @@ jobs:
         env:
           RELEASE_VERSION: ${{ github.event.release.tag_name }}
 
+      - name: Select release JAR
+        id: jar
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Listing build/libs" 
+          ls -lah build/libs || true
+
+          mapfile -t jars < <(
+            find build/libs -maxdepth 1 -type f -name "*.jar" \
+              ! -name "*-sources.jar" \
+              ! -name "*-javadoc.jar" \
+              -print | sort
+          )
+
+          if [ "${#jars[@]}" -ne 1 ]; then
+            echo "Expected exactly 1 release jar in build/libs, found ${#jars[@]}" >&2
+            printf '%s\n' "${jars[@]}" >&2
+            exit 1
+          fi
+
+          echo "path=${jars[0]}" >> "$GITHUB_OUTPUT"
+
       - name: Publish
         run: ./gradlew publish
         env:
@@ -43,4 +66,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            build/libs/*.jar
+            ${{ steps.jar.outputs.path }}
